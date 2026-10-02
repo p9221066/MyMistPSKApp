@@ -1,21 +1,33 @@
 """Local settings for MyMistPSKApp.
 
-The API token is stored in cleartext JSON under %LOCALAPPDATA% by design
-(chosen at setup time for convenience). Anything that can read your user
-profile can read the token, so treat the file as a secret: see README.md.
+The API token is stored in cleartext JSON in the per-user config directory
+(see config_dir) by design, chosen at setup time for convenience. Anything
+that can read your user profile can read the token, so treat the file as a
+secret: see README.md.
+
+On macOS and Linux the file is chmod 0600, which genuinely restricts it to
+your account. On Windows that call only toggles the read-only flag and does
+not restrict ACLs, so the file is readable by any process running as you.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import sys
 from pathlib import Path
 
 APP_NAME = "MyMistPSKApp"
 
 
 def config_dir() -> Path:
-    base = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA") or str(Path.home())
+    """The per-user config directory, following each platform's convention."""
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / APP_NAME
+    if os.name == "nt":
+        base = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA") or str(Path.home())
+        return Path(base) / APP_NAME
+    base = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
     return Path(base) / APP_NAME
 
 
@@ -55,6 +67,7 @@ def save(data: dict) -> None:
     tmp.write_text(json.dumps(out, indent=2), encoding="utf-8")
     tmp.replace(path)
     try:
+        # Effective on macOS/Linux; a near no-op on Windows (see module docstring).
         os.chmod(path, 0o600)
     except OSError:
         pass

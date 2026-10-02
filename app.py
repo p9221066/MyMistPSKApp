@@ -8,6 +8,7 @@ from __future__ import annotations
 import csv
 import re
 import secrets
+import sys
 import threading
 import tkinter as tk
 from datetime import datetime
@@ -15,6 +16,26 @@ from tkinter import filedialog, messagebox, ttk
 
 import settings
 from mist_api import CLOUDS, USAGE_VALUES, MistClient, MistError
+
+IS_MAC = sys.platform == "darwin"
+
+# Passphrases and MAC lists are read character by character, so they get a
+# monospace face. Each platform ships a different one.
+if IS_MAC:
+    MONO_FONT = ("Menlo", 12)
+elif sys.platform.startswith("win"):
+    MONO_FONT = ("Consolas", 10)
+else:
+    MONO_FONT = ("DejaVu Sans Mono", 10)
+
+# The boxed areas set both colours. Setting only a background leaves the
+# foreground to the system, which turns white text onto a light panel under
+# macOS dark mode.
+BOX_BG = "#f3f3f3"
+BOX_FG = "#1a1a1a"
+MUTED = "#666666"
+WARN = "#a05000"
+DISABLED = "#999999"
 
 CUSTOM_CLOUD = "Custom host..."
 # Ambiguous glyphs (0/O, 1/l/I) left out so a passphrase can be read aloud.
@@ -291,7 +312,7 @@ class PSKApp(tk.Tk):
             ttk.Label(frame, text=text).grid(row=row, column=0, sticky="w", padx=(0, 6), pady=3)
 
         def hint(text, row, column=2):
-            ttk.Label(frame, text=text, foreground="#666666").grid(
+            ttk.Label(frame, text=text, foreground=MUTED).grid(
                 row=row, column=column, sticky="w", padx=(6, 0)
             )
 
@@ -306,7 +327,7 @@ class PSKApp(tk.Tk):
         self.ent_pass.grid(row=row, column=1, sticky="ew", pady=3)
         pass_btns = ttk.Frame(frame)
         pass_btns.grid(row=row, column=2, sticky="w", padx=(6, 0))
-        ttk.Button(pass_btns, text="Generate", width=9, command=self.on_generate).pack(side="left")
+        ttk.Button(pass_btns, text="Generate", command=self.on_generate).pack(side="left")
         ttk.Checkbutton(
             pass_btns, text="Show", variable=self.var_show_pass, command=self._sync_pass_mask,
         ).pack(side="left", padx=(4, 0))
@@ -331,7 +352,7 @@ class PSKApp(tk.Tk):
         self.ent_macs.grid(row=row, column=1, columnspan=2, sticky="ew", pady=3)
 
         row += 1
-        self.lbl_macs_hint = ttk.Label(frame, text="", foreground="#666666")
+        self.lbl_macs_hint = ttk.Label(frame, text="", foreground=MUTED)
         self.lbl_macs_hint.grid(row=row, column=1, columnspan=2, sticky="w")
 
         row += 1
@@ -381,7 +402,7 @@ class PSKApp(tk.Tk):
 
         row += 1
         # Advisory only - a missing recipient never blocks Create PSK.
-        self.lbl_email_warn = ttk.Label(frame, text="", foreground="#a05000", wraplength=240)
+        self.lbl_email_warn = ttk.Label(frame, text="", foreground=WARN, wraplength=240)
         self.lbl_email_warn.grid(row=row, column=1, columnspan=2, sticky="w")
 
         row += 1
@@ -406,7 +427,7 @@ class PSKApp(tk.Tk):
         # force this whole column wide and squeeze the PSK list beside it.
         self.txt_result = tk.Text(
             frame, height=5, width=34, wrap="word", state="disabled", relief="flat",
-            background="#f3f3f3", padx=6, pady=4,
+            background=BOX_BG, foreground=BOX_FG, font=MONO_FONT, padx=6, pady=4,
         )
         self.txt_result.grid(row=row, column=0, columnspan=3, sticky="nsew", pady=(4, 0))
         frame.rowconfigure(row, weight=1)
@@ -436,7 +457,7 @@ class PSKApp(tk.Tk):
         actions.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(6, 8))
         self.btn_macs = ttk.Button(actions, text="Edit MACs", command=self.on_edit_macs)
         self.btn_macs.pack(side="left")
-        ttk.Label(actions, text="(or double-click a row)", foreground="#666666").pack(
+        ttk.Label(actions, text="(or double-click a row)", foreground=MUTED).pack(
             side="left", padx=(6, 12)
         )
         self.btn_delete = ttk.Button(actions, text="Delete selected", command=self.on_delete)
@@ -467,7 +488,7 @@ class PSKApp(tk.Tk):
         xscroll.grid(row=3, column=0, sticky="ew")
         self.tree.configure(yscrollcommand=yscroll.set, xscrollcommand=xscroll.set)
 
-        ttk.Label(frame, textvariable=self.var_count, foreground="#666666").grid(
+        ttk.Label(frame, textvariable=self.var_count, foreground=MUTED).grid(
             row=4, column=0, sticky="w", pady=(6, 0)
         )
 
@@ -883,6 +904,9 @@ class PSKApp(tk.Tk):
             return
         self.clipboard_clear()
         self.clipboard_append(passphrase)
+        # macOS and X11 hand the clipboard over lazily; without this the text is
+        # lost if the app closes before another program asks for it.
+        self.update()
         self.var_status.set("Passphrase copied to the clipboard.")
 
     def _build_payload(self):
@@ -982,7 +1006,7 @@ class PSKApp(tk.Tk):
         self._show_result(
             f"Created PSK '{name}' on SSID {ssid}.\n"
             f"Passphrase: {passphrase}\n\n"
-            "Copy it now - Mist does not return existing passphrases in the list."
+            "Copy it now - the list below does not show passphrases."
         )
         self.var_status.set(f"PSK '{name}' created. Form cleared for the next key.")
         self._reset_form(keep_result=True)
@@ -1061,12 +1085,12 @@ class MacEditor(tk.Toplevel):
         header = ttk.Frame(outer)
         header.grid(row=0, column=0, sticky="ew")
         ttk.Label(
-            header, text=self.psk.get("name", ""), font=("", 10, "bold"),
+            header, text=self.psk.get("name", ""), font=("TkDefaultFont", 10, "bold"),
         ).pack(side="left")
         ttk.Label(
             header,
             text=f"   SSID {self.psk.get('ssid', '')}   usage '{self.usage}'",
-            foreground="#666666",
+            foreground=MUTED,
         ).pack(side="left")
 
         hint = (
@@ -1075,7 +1099,7 @@ class MacEditor(tk.Toplevel):
             "One entry per line. 'aabbccddeeff' or 'aa:bb:cc:dd:ee:ff', "
             "or a prefix pattern such as '1122*'."
         )
-        ttk.Label(outer, text=hint, foreground="#666666", wraplength=430).grid(
+        ttk.Label(outer, text=hint, foreground=MUTED, wraplength=430).grid(
             row=1, column=0, sticky="w", pady=(8, 4)
         )
 
@@ -1083,7 +1107,11 @@ class MacEditor(tk.Toplevel):
         box.grid(row=3, column=0, sticky="nsew")
         box.columnconfigure(0, weight=1)
         box.rowconfigure(0, weight=1)
-        self.txt = tk.Text(box, width=40, height=14, wrap="none", undo=True)
+        self.txt = tk.Text(
+            box, width=40, height=14, wrap="none", undo=True,
+            background=BOX_BG, foreground=BOX_FG, font=MONO_FONT,
+            insertbackground=BOX_FG,
+        )
         self.txt.grid(row=0, column=0, sticky="nsew")
         yscroll = ttk.Scrollbar(box, orient="vertical", command=self.txt.yview)
         yscroll.grid(row=0, column=1, sticky="ns")
@@ -1091,7 +1119,7 @@ class MacEditor(tk.Toplevel):
         self.txt.insert("1.0", "\n".join(mac_entries(self.psk)))
         self.txt.bind("<<Modified>>", self._on_modified)
 
-        ttk.Label(outer, textvariable=self.var_count, foreground="#666666").grid(
+        ttk.Label(outer, textvariable=self.var_count, foreground=MUTED).grid(
             row=4, column=0, sticky="w", pady=(6, 0)
         )
         self._update_count()
@@ -1122,7 +1150,7 @@ class MacEditor(tk.Toplevel):
             text="Mist did not return this PSK's passphrase, and its update API "
                  "requires one. Saving will SET the passphrase below, which "
                  "disconnects clients using the current one.",
-            foreground="#a05000", wraplength=430, justify="left",
+            foreground=WARN, wraplength=430, justify="left",
         ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 6))
         ttk.Label(warn, text="New passphrase").grid(row=1, column=0, sticky="w", padx=(0, 6))
         ttk.Entry(warn, textvariable=self.var_pass).grid(row=1, column=1, sticky="ew")

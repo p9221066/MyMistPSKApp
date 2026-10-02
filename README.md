@@ -1,7 +1,8 @@
 # MyMistPSKApp
 
-A small Windows desktop app for creating and managing **organization-level PSKs**
-in Juniper Mist, using the Mist REST API.
+A small cross-platform desktop app for creating and managing
+**organization-level PSKs** in Juniper Mist, using the Mist REST API.
+Runs on Windows, macOS and Linux.
 
 ![screenshot](docs/screenshot.png)
 
@@ -19,19 +20,36 @@ in Juniper Mist, using the Mist REST API.
 
 ## Install
 
-Python 3.9 or newer, with Tkinter (included in the standard python.org installer).
+Python 3.9 or newer, with Tkinter.
 
 ```
 pip install -r requirements.txt
 ```
 
+**Windows** — Tkinter ships with the python.org installer; nothing extra needed.
+
+**macOS** — the Python bundled with macOS does not include a usable Tk. Install
+one that does:
+
+```
+brew install python-tk        # if you use Homebrew Python
+```
+
+or install Python from [python.org](https://www.python.org/downloads/), which
+bundles Tk. Check with `python3 -c "import tkinter"`.
+
+**Linux** — `sudo apt install python3-tk` (or your distribution's equivalent).
+
 ## Run
 
-Double-click `run.bat`, or:
+| Platform | How |
+| --- | --- |
+| Windows | Double-click `run.bat`, or `python app.py` |
+| macOS | Double-click `run.command`, or `python3 app.py` |
+| Linux | `./run.command`, or `python3 app.py` |
 
-```
-python app.py
-```
+If `run.command` will not launch from Finder, make it executable once:
+`chmod +x run.command`.
 
 ## Getting an API token
 
@@ -106,15 +124,26 @@ MAC edit you make will show you which one applies.
 
 ## Where settings are stored
 
-`%LOCALAPPDATA%\MyMistPSKApp\config.json` — cloud region, selected org, and (if
-"Remember token on this PC" is ticked) the API token.
+Cloud region, selected org, and (if "Remember token on this PC" is ticked) the
+API token:
+
+| Platform | Path |
+| --- | --- |
+| Windows | `%LOCALAPPDATA%\MyMistPSKApp\config.json` |
+| macOS | `~/Library/Application Support/MyMistPSKApp/config.json` |
+| Linux | `$XDG_CONFIG_HOME/MyMistPSKApp/config.json` (default `~/.config/...`) |
 
 **The token is stored in cleartext.** That was a deliberate choice for
-convenience. It means any program running as your Windows user can read it.
+convenience. It means any program running as your user account can read it.
+
+The file is written with `chmod 0600`. On macOS and Linux that genuinely limits
+it to your account. **On Windows it does not** — there it only toggles the
+read-only flag, leaving the inherited ACL in place.
+
 If that isn't acceptable:
 
 - Untick **Remember token on this PC** and paste the token at each launch, or
-- Delete `%LOCALAPPDATA%\MyMistPSKApp\config.json` when you're done.
+- Delete the config file when you're done.
 
 Rotate or delete the token in the Mist dashboard if you think it has leaked.
 
@@ -133,6 +162,7 @@ authenticate against another.
 | `mist_api.py` | Mist REST client: auth, pagination, error handling |
 | `settings.py` | Local config load/save |
 | `run.bat` | Windows launcher |
+| `run.command` | macOS / Linux launcher |
 
 ## API endpoints used
 
@@ -155,6 +185,11 @@ The request and response shapes come from Juniper's published OpenAPI spec
 exercised against a stubbed HTTP transport — roughly 70 checks covering payload
 building, validation, pagination, error handling and the MAC editor — so no
 live org was touched during development.
+
+Development and the screenshots were done on Windows. The platform-specific
+code is the config directory, which is unit-checked for all three platforms, and
+the launcher scripts. The rest is plain Tkinter, but **the macOS build has not
+been run on a Mac** — expect to iron out minor spacing if anything looks off.
 
 Two paths are therefore unproven until you run them against a real org:
 
