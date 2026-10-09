@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased: Usermac Label Manager
+
+### Added
+
+- **`labels_app.py`**, a second app that only manages usermac labels:
+  - a label list with MAC counts, and **Find** by label, MAC or device name;
+  - the selected label's MACs, with device names, other labels and the PSKs
+    that use the label;
+  - **Add MACs...**, **New label...** and **Remove selected**, with an option
+    to delete Client List entries left with no labels;
+  - the same **Label cleanup...** window as the PSK Manager.
+- Launchers `run_labels.bat` (Windows) and `run_labels.command` (macOS / Linux).
+- [docs/ADMIN-GUIDE.md](docs/ADMIN-GUIDE.md): setting the apps up for an
+  additional network admin, covering tokens, roles, per-user settings and
+  who should own Label cleanup.
+- `MistClient.untag_usermac`: takes labels off one Client List entry, deleting
+  it when none are left if asked. Label cleanup now uses it too.
+
+### Changed
+
+- **`common.py`** (new) holds what both apps share: the base window
+  (`MistAppBase`) with the Connection bar, status bar and background calls; the
+  MAC/label helpers; and the label cleanup window. `app.py` now builds on it and
+  keeps only the PSK-specific code. The PSK Manager behaves the same as before.
+
 ## Unreleased: usermac labels and label cleanup
 
 ### Added

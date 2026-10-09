@@ -177,6 +177,26 @@ class MistClient:
     def delete_usermac(self, org_id, usermac_id):
         return self._request("DELETE", f"/api/v1/orgs/{org_id}/usermacs/{usermac_id}")
 
+    def untag_usermac(self, org_id, row, labels, delete_empty=False):
+        """Take `labels` off one Client List entry (a row from list_usermacs).
+
+        An entry left with no labels is deleted when `delete_empty`, otherwise
+        kept with an empty list. Returns "deleted entry" or "removed label".
+        """
+        drop = set(labels)
+        remaining = [label for label in row.get("labels") or [] if label not in drop]
+        if not remaining and delete_empty:
+            self.delete_usermac(org_id, row["id"])
+            return "deleted entry"
+        payload = {
+            key: row[key]
+            for key in ("mac", "name", "notes", "vlan", "radius_group")
+            if row.get(key) not in (None, "")
+        }
+        payload["labels"] = remaining
+        self.update_usermac(org_id, row["id"], payload)
+        return "removed label"
+
     # ---------- client history ----------
 
     def client_sightings(self, org_id, mac, duration="30d"):
