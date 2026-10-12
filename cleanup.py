@@ -3,11 +3,14 @@
 No Tk in here: the GUI's Label cleanup dialog drives it today, and a
 scheduled command-line run can reuse it unchanged.
 
-Mist keeps only a short window of client history (LOOKBACK), so "last seen"
-is tracked locally in a per-org ledger that grows with every run. A MAC/label
-pair that has never been seen ages from when it was tagged, which is never
-taken as earlier than the lookback window - outside that window we simply do
-not know, and guessing would remove devices that are in use.
+Every decision comes straight from Mist's client history, which reaches back
+LOOKBACK_DAYS. Thresholds are therefore capped at MAX_DAYS (= LOOKBACK_DAYS):
+past that, Mist cannot tell an idle device from one it has forgotten.
+
+A MAC that Mist has not seen ages from when its Client List entry last
+changed (updated_at, never earlier than the label was added), so a newly
+tagged device gets the full grace period. Undo also restarts the grace period
+for what it puts back.
 """
 
 from __future__ import annotations
@@ -24,11 +27,12 @@ import settings
 DAY = 86400
 LOOKBACK_DAYS = 30
 LOOKBACK = f"{LOOKBACK_DAYS}d"
+MIN_DAYS, MAX_DAYS = 1, LOOKBACK_DAYS   # thresholds; 0 separately means "never"
 
 POLICY_DEFAULTS = {
-    "default_days": 90,     # 0 = never prune labels without an override
+    "default_days": 30,     # 0 = never prune labels without an override
     "label_days": {},       # label -> days; 0 = never prune this label
-    "psk_only": False,      # only count connections made with a PSK using the label
+    "ssid_only": False,     # only count connections to an SSID whose PSK uses the label
     "delete_empty": False,  # delete a Client List entry once it has no labels left
     "max_percent": 20,      # refuse a run that would remove more than this share
 }
@@ -67,21 +71,37 @@ def _write_json(path, data):
 def load_policy(org_id):
     policy = dict(POLICY_DEFAULTS)
     stored = _read_json(_org_file("cleanup", org_id))
+    if "psk_only" in stored and "ssid_only" not in stored:
+        stored["ssid_only"] = stored["psk_only"]   # option renamed
     policy.update({k: v for k, v in stored.items() if k in POLICY_DEFAULTS})
-    policy["label_days"] = dict(policy.get("label_days") or {})
+    # Older versions allowed thresholds past what Mist's history can support.
+    policy["default_days"] = clamp_days(policy["default_days"])
+    policy["label_days"] = {
+        label: clamp_days(days) for label, days in dict(policy.get("label_days") or {}).items()
+    }
     return policy
+
+
+def clamp_days(days):
+    """Fit a stored threshold into 0 (never) or MIN_DAYS..MAX_DAYS."""
+    try:
+        days = int(days)
+    except (TypeError, ValueError):
+        return 0
+    return 0 if days <= 0 else min(max(days, MIN_DAYS), MAX_DAYS)
 
 
 def save_policy(org_id, policy):
     _write_json(_org_file("cleanup", org_id), {k: policy[k] for k in POLICY_DEFAULTS})
 
 
-def load_ledger(org_id):
-    return _read_json(_org_file("ledger", org_id))
+def load_restored(org_id):
+    """{label|mac: epoch} for pairs Undo put back; their grace period restarts then."""
+    return _read_json(_org_file("restored", org_id))
 
 
-def save_ledger(org_id, ledger):
-    _write_json(_org_file("ledger", org_id), ledger)
+def save_restored(org_id, restored):
+    _write_json(_org_file("restored", org_id), restored)
 
 
 def _key(label, mac):
@@ -98,7 +118,7 @@ class Candidate:
     mac: str
     name: str
     usermac_id: str
-    last_seen: float | None     # None: not seen since tracking began
+    last_seen: float | None     # None: not seen in Mist's last LOOKBACK_DAYS
     idle_days: int
     threshold: int
     used_by: list = field(default_factory=list)  # names of PSKs using the label
@@ -119,17 +139,13 @@ class Plan:
 
 
 def threshold_for(policy, label):
-    days = policy["label_days"].get(label, policy["default_days"])
-    try:
-        return max(0, int(days))
-    except (TypeError, ValueError):
-        return 0
+    return clamp_days(policy["label_days"].get(label, policy["default_days"]))
 
 
 def build_plan(client, org_id, policy, now=None, progress=None):
     """Look up every labelled MAC and return what is idle past its threshold.
 
-    Updates and saves the ledger, but changes nothing in Mist. Any API error
+    Changes nothing in Mist. Any API error
     propagates: a partial view must never turn into "these were unused".
     """
     now = now or time.time()
@@ -157,41 +173,34 @@ def build_plan(client, org_id, policy, now=None, progress=None):
             progress(index, len(macs))
         sightings[mac] = client.client_sightings(org_id, mac, LOOKBACK)
 
-    old_ledger = load_ledger(org_id)
-    ledger = {}
+    restored = load_restored(org_id)
     candidates = []
-    floor = now - LOOKBACK_DAYS * DAY
     for label, row in pairs:
-        mac = row["mac"]
-        entry = dict(old_ledger.get(_key(label, mac)) or {})
-        if "first_tagged" not in entry:
-            # updated_at is no earlier than the moment this label was added.
-            tagged = row.get("updated_at") or row.get("created_at") or now
-            entry["first_tagged"] = max(float(tagged), floor)
-
-        seen, psk_ids = sightings.get(mac, (None, set()))
-        if seen is not None and policy["psk_only"]:
-            label_psks = {psk.get("id") for psk in psks_by_label.get(label, [])}
-            if not psk_ids & label_psks:
-                seen = None
-        if seen is not None and seen > entry.get("last_seen", 0):
-            entry["last_seen"] = seen
-        ledger[_key(label, mac)] = entry
-
         threshold = threshold_for(policy, label)
         if not threshold:
             continue
-        reference = entry.get("last_seen") or entry["first_tagged"]
+        mac = row["mac"]
+        seen_by_ssid = sightings.get(mac) or {}
+        if policy["ssid_only"]:
+            ssids = {psk.get("ssid") for psk in psks_by_label.get(label, []) if psk.get("ssid")}
+            seen_by_ssid = {ssid: t for ssid, t in seen_by_ssid.items() if ssid in ssids}
+        last_seen = max(seen_by_ssid.values(), default=None)
+
+        # Never age a pair from before it could have been tagged or restored.
+        tagged = float(row.get("updated_at") or row.get("created_at") or now)
+        reference = max(last_seen or 0, tagged, float(restored.get(_key(label, mac), 0)))
         idle = int((now - reference) // DAY)
+        if last_seen is None:
+            # Beyond the lookback Mist cannot say how long, only "at least this".
+            idle = min(idle, LOOKBACK_DAYS)
         if idle >= threshold:
             candidates.append(Candidate(
                 label=label, mac=mac, name=row.get("name") or "",
-                usermac_id=row["id"], last_seen=entry.get("last_seen"),
+                usermac_id=row["id"], last_seen=last_seen,
                 idle_days=idle, threshold=threshold,
                 used_by=[psk.get("name") or "" for psk in psks_by_label.get(label, [])],
             ))
 
-    save_ledger(org_id, ledger)  # pairs no longer tagged drop out here
     candidates.sort(key=lambda c: (c.label.lower(), -c.idle_days, c.mac))
     return Plan(org_id, candidates, len(pairs), usermacs,
                 int(policy["max_percent"]), psks_by_label)
@@ -269,12 +278,15 @@ def undo_run(client, org_id, run_id):
     created, updated = client.tag_usermacs(org_id, assignments)
 
     # A restored pair starts a fresh grace period instead of being pruned again
-    # on the next run.
-    ledger = load_ledger(org_id)
+    # on the next run. Entries older than the lookback no longer matter.
     now = time.time()
+    restored = {
+        key: when for key, when in load_restored(org_id).items()
+        if now - float(when) < LOOKBACK_DAYS * DAY
+    }
     for row in rows:
-        ledger[_key(row["label"], row["mac"])] = {"first_tagged": now}
-    save_ledger(org_id, ledger)
+        restored[_key(row["label"], row["mac"])] = now
+    save_restored(org_id, restored)
 
     _mark_restored(run_id)
     return created, updated

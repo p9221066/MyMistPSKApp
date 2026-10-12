@@ -73,7 +73,7 @@ Everything is saved in your own user profile, not in the app folder:
 | --- | --- |
 | `config.json` | Cloud, org and, if **Remember token on this PC** is ticked, your token **in plain text** |
 | `cleanup-<org_id>.json` | Your Label cleanup settings for that org |
-| `ledger-<org_id>.json` | Your record of when each labelled MAC was last seen |
+| `restored-<org_id>.json` | Label/MAC pairs your **Undo last run** put back, so they get a fresh grace period |
 | `cleanup-log.csv` | Every MAC that your cleanup runs removed, used by **Undo last run** |
 
 So:
@@ -89,12 +89,10 @@ So:
 goes straight to Mist. Press **Refresh** to see changes made by others.
 
 **Label cleanup should have one owner per org.** Each admin's copy keeps its
-own cleanup settings, last-seen record and undo log. If two admins both run
-cleanup on the same org:
+own cleanup settings and undo log. ("Last seen" comes from Mist, so that part
+is the same for everyone.) If two admins both run cleanup on the same org:
 
 - they may use different thresholds without realising it;
-- each one's last-seen record covers only the times *they* ran it, so a MAC
-  can look idle to one admin while the other saw it recently;
 - **Undo last run** only undoes the runs made from that copy. It cannot undo
   a colleague's run.
 

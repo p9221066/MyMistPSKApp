@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased: label cleanup uses Mist's full 30-day history
+
+### Fixed
+
+- **Label cleanup could remove devices that had connected recently.** Last seen
+  came from `clients/search`, which in practice only covers about the last
+  week. A device last connected, say, 23 days ago was treated as not seen, so
+  it would be removed under a 20 or 25-day threshold. Last seen now combines
+  `clients/sessions/search`, which covers 30 days, with `clients/search`, which
+  includes devices connected right now.
+
+### Changed
+
+- Thresholds are limited to **1-30 days** (`0` = never), shown next to both
+  fields and checked when saved. Settings above 30 are lowered to 30 when
+  loaded. The default is now 30 days.
+- "Only count connections made with a PSK that uses the label" is now
+  "Only count connections to an SSID that has a PSK using the label", because
+  the connection history records the SSID but not the PSK. Existing settings
+  carry over.
+- The local last-seen record (`ledger-<org_id>.json`) is no longer used;
+  every decision comes from Mist. Old ledger files can be deleted.
+- A device Mist has not seen shows as "not in 30 days" with "30+" idle days.
+
 ## Unreleased: Label Manager limited to adding and removing MACs
 
 ### Removed
