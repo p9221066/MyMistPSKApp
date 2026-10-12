@@ -26,7 +26,7 @@ Then start the app you need:
 
 | App | Windows | macOS / Linux |
 | --- | --- | --- |
-| Usermac Label Manager | `run_labels.bat` | `./run_labels.command` |
+| Usermac Label Manager (add / remove MACs on existing labels) | `run_labels.bat` | `./run_labels.command` |
 | PSK Manager | `run.bat` | `./run.command` |
 
 ## 2. Create your own API token
@@ -49,12 +49,13 @@ to the whole org; they cannot be limited to the Client List.
 | Task | Role needed |
 | --- | --- |
 | Browse labels, MACs and PSKs | Any role on the org, including Observer |
-| Add or remove MACs, create labels, run Label cleanup | Write access to the org's Client List. Expected to be **Network Admin** or **Super User**; not yet tested with other roles |
+| Add or remove MACs; in the PSK Manager, also create labels and run Label cleanup | Write access to the org's Client List. Expected to be **Network Admin** or **Super User**; not yet tested with other roles |
 
 Without the right role, changes fail with **403 Forbidden** and nothing is modified.
 
 **The Usermac Label Manager limits what is on screen, not what the token
-can do.** A token that can edit the Client List can usually also create and
+can do.** It has no buttons for creating labels or running Label cleanup, but
+the same token works in the PSK Manager, which has both. A token that can edit the Client List can usually also create and
 delete PSKs, through the PSK Manager or any other tool. If that matters, give
 the admin the smallest role that works and review Mist's audit log.
 
@@ -103,7 +104,15 @@ changes nothing in Mist, but should not press **Run now**.
 ## 6. If something goes wrong
 
 - **A MAC was removed by mistake.** Add it back with **Add MACs...**, or, if it
-  was removed by your own cleanup run, use **Undo last run** in Label cleanup.
+  was removed by your own cleanup run, use **Undo last run** in the PSK
+  Manager's Label cleanup.
+- **A device is on the wrong label, or on two.** Type its MAC in **Find MAC**
+  to see every label it has. Click the label it should not be on, then
+  **Remove selected**; the device is already selected.
+- **"must keep at least one MAC".** The Usermac Label Manager will not remove
+  a label's last MAC, because that would delete the label. Add the replacement
+  device first, then remove the old one. To retire a label, ask whoever manages
+  labels in the PSK Manager.
 - **403 Forbidden.** Your token's role cannot make that change. Ask an org
   Super User.
 - **401 Unauthorized.** The token is wrong, revoked, or from a different Mist
