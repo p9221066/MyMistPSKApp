@@ -216,21 +216,9 @@ def apply_plan(client, plan, delete_empty):
     done = []
     try:
         for usermac_id, cands in by_entry.items():
-            row = plan.usermacs[usermac_id]
-            drop = {c.label for c in cands}
-            labels = [label for label in row.get("labels") or [] if label not in drop]
-            if not labels and delete_empty:
-                client.delete_usermac(plan.org_id, usermac_id)
-                action = "deleted entry"
-            else:
-                payload = {
-                    key: row[key]
-                    for key in ("mac", "name", "notes", "vlan", "radius_group")
-                    if row.get(key) not in (None, "")
-                }
-                payload["labels"] = labels
-                client.update_usermac(plan.org_id, usermac_id, payload)
-                action = "removed label"
+            action = client.untag_usermac(
+                plan.org_id, plan.usermacs[usermac_id], [c.label for c in cands], delete_empty
+            )
             done.extend((cand, action) for cand in cands)
     finally:
         # Log whatever succeeded, even if a later call failed.

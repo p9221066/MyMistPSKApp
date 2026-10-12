@@ -1,8 +1,12 @@
 # MyMistPSKApp
 
-A small cross-platform desktop app for creating and managing
-**organization-level PSKs** in Juniper Mist, using the Mist REST API.
-Runs on Windows, macOS and Linux.
+Two small cross-platform desktop apps for Juniper Mist, using the Mist REST API.
+Both run on Windows, macOS and Linux and share one saved login.
+
+- **PSK Manager** (`app.py`): create and manage **organization-level PSKs**.
+- **Usermac Label Manager** (`labels_app.py`): add MACs to and remove them
+  from **usermac labels**, with nothing else on screen. See
+  [Usermac Label Manager](#usermac-label-manager).
 
 ![screenshot](docs/screenshot.png)
 
@@ -48,12 +52,14 @@ bundles Tk. Check with `python3 -c "import tkinter"`.
 
 | Platform | How |
 | --- | --- |
-| Windows | Double-click `run.bat`, or `python app.py` |
-| macOS | Double-click `run.command`, or `python3 app.py` |
-| Linux | `./run.command`, or `python3 app.py` |
+| Platform | PSK Manager | Usermac Label Manager |
+| --- | --- | --- |
+| Windows | Double-click `run.bat`, or `python app.py` | Double-click `run_labels.bat`, or `python labels_app.py` |
+| macOS | Double-click `run.command`, or `python3 app.py` | Double-click `run_labels.command`, or `python3 labels_app.py` |
+| Linux | `./run.command`, or `python3 app.py` | `./run_labels.command`, or `python3 labels_app.py` |
 
-If `run.command` will not launch from Finder, make it executable once:
-`chmod +x run.command`.
+If a `.command` file will not launch from Finder, make it executable once:
+`chmod +x run.command run_labels.command`.
 
 ## Getting an API token
 
@@ -153,6 +159,38 @@ a per-org setting (`cleanup-<org_id>.json`).
 Removing a label from a MAC affects every PSK and policy that uses that label.
 Devices with randomized MACs may also show as idle after rotating their address.
 
+## Usermac Label Manager
+
+A second, simpler app for people who only look after the Client List. It does
+not show or change PSKs.
+
+- **Labels** (left): every label in the org with its MAC count. **Find**
+  narrows the list by label name, MAC (any format) or device name.
+- **MACs** (right): the MACs the selected label tags, their device names, any
+  other labels they carry, and which PSKs use the label.
+- **Add MACs...** tags MACs with the selected label: one per line, optionally
+  followed by a device name. MACs not yet in the Client List get a new entry;
+  existing ones keep their other labels.
+- **New label...** creates a label by tagging its first MACs. A label only
+  exists while it tags at least one MAC. Names cannot contain spaces, commas or
+  semicolons, because the PSK form splits its labels field on those.
+- **Remove selected** (or the Delete key) takes the label off the selected
+  MACs, after a confirmation that names the affected PSKs. Tick **Delete Client
+  List entries left with no labels** to delete entries that end up with no
+  label; otherwise they are kept with no labels.
+- **Label cleanup...** opens the same cleanup window as the PSK Manager.
+
+It uses the same connection settings as the PSK Manager. Connecting in one app
+is remembered in the other.
+
+### Handing it to another network admin
+
+Another admin can run their own copy against the same org. In short: their own
+computer, their own API token, and one agreed owner for Label cleanup. Their
+token's Mist role decides what they can change, not which app they use. See
+[docs/ADMIN-GUIDE.md](docs/ADMIN-GUIDE.md) for setup, roles, where settings
+are stored, and working alongside other admins.
+
 ## Where settings are stored
 
 Cloud region, selected org, and (if "Remember token on this PC" is ticked) the
@@ -189,13 +227,16 @@ authenticate against another.
 
 | File | Purpose |
 | --- | --- |
-| `app.py` | Tkinter UI and form logic |
+| `app.py` | PSK Manager: UI and form logic |
+| `labels_app.py` | Usermac Label Manager |
+| `common.py` | Shared by both apps: connection and status bars, background calls, MAC/label helpers, label cleanup window |
 | `mist_api.py` | Mist REST client: auth, pagination, error handling |
 | `settings.py` | Local config load/save |
 | `cleanup.py` | Label cleanup: policy, last-seen ledger, plan, apply, undo |
 | `CHANGELOG.md` | What changed between versions |
-| `run.bat` | Windows launcher |
-| `run.command` | macOS / Linux launcher |
+| `docs/ADMIN-GUIDE.md` | Setup and ground rules for an additional network admin |
+| `run.bat`, `run_labels.bat` | Windows launchers |
+| `run.command`, `run_labels.command` | macOS / Linux launchers |
 
 ## API endpoints used
 
@@ -240,6 +281,10 @@ listing the Client List and following its `next` pages, the Existing menu, and
 a cleanup Preview. Writing to the Client List (tagging new labels, cleanup Run
 now and Undo) was tested only against a fake client, so try it on a test label
 first. The new dialogs were exercised in a hidden window, not inspected on screen.
+
+The Usermac Label Manager was driven the same way: connecting and loading
+labels against the live org (read-only), then adding, creating and removing
+against a fake client. Its add and remove calls have not yet changed a real org.
 
 ## Limitations
 
