@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased: Label Manager limited to adding and removing MACs
+
+### Removed
+
+- **New label...** and **Label cleanup...** from the Usermac Label Manager, so
+  desktop support staff can only add MACs to and remove MACs from existing
+  labels. Both features remain in the PSK Manager. The Add MACs dialog now
+  always targets the selected label.
+
+### Changed
+
+- The Usermac Label Manager refuses to remove a label's last MAC, since that
+  would delete the label and the app can no longer create it again.
+
 ## Unreleased: Usermac Label Manager
 
 ### Added

@@ -4,8 +4,9 @@ Two small cross-platform desktop apps for Juniper Mist, using the Mist REST API.
 Both run on Windows, macOS and Linux and share one saved login.
 
 - **PSK Manager** (`app.py`): create and manage **organization-level PSKs**.
-- **Usermac Label Manager** (`labels_app.py`): add MACs to and remove them
-  from **usermac labels**, with nothing else on screen. See
+- **Usermac Label Manager** (`labels_app.py`): for desktop support staff.
+  Add MACs to and remove them from **existing usermac labels**, with nothing
+  else on screen. See
   [Usermac Label Manager](#usermac-label-manager).
 
 ![screenshot](docs/screenshot.png)
@@ -161,8 +162,9 @@ Devices with randomized MACs may also show as idle after rotating their address.
 
 ## Usermac Label Manager
 
-A second, simpler app for people who only look after the Client List. It does
-not show or change PSKs.
+A second, simpler app for desktop support staff who only add and remove
+devices. It does not show or change PSKs, create labels, or run label cleanup;
+those stay in the PSK Manager.
 
 - **Labels** (left): every label in the org with its MAC count. **Find**
   narrows the list by label name, MAC (any format) or device name.
@@ -171,14 +173,15 @@ not show or change PSKs.
 - **Add MACs...** tags MACs with the selected label: one per line, optionally
   followed by a device name. MACs not yet in the Client List get a new entry;
   existing ones keep their other labels.
-- **New label...** creates a label by tagging its first MACs. A label only
-  exists while it tags at least one MAC. Names cannot contain spaces, commas or
-  semicolons, because the PSK form splits its labels field on those.
 - **Remove selected** (or the Delete key) takes the label off the selected
   MACs, after a confirmation that names the affected PSKs. Tick **Delete Client
   List entries left with no labels** to delete entries that end up with no
   label; otherwise they are kept with no labels.
-- **Label cleanup...** opens the same cleanup window as the PSK Manager.
+- **Refresh** reloads the Client List, to pick up changes made by others.
+
+A label exists only while it tags at least one MAC, so the app refuses to remove
+a label's last MAC. Otherwise the label would be deleted, and this app cannot
+create it again. Creating and deleting labels is done in the PSK Manager.
 
 It uses the same connection settings as the PSK Manager. Connecting in one app
 is remembered in the other.
@@ -186,7 +189,8 @@ is remembered in the other.
 ### Handing it to another network admin
 
 Another admin can run their own copy against the same org. In short: their own
-computer, their own API token, and one agreed owner for Label cleanup. Their
+computer, their own API token, and one agreed owner for Label cleanup, which only
+the PSK Manager can run. Their
 token's Mist role decides what they can change, not which app they use. See
 [docs/ADMIN-GUIDE.md](docs/ADMIN-GUIDE.md) for setup, roles, where settings
 are stored, and working alongside other admins.

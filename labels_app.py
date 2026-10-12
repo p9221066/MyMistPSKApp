@@ -1,8 +1,9 @@
 """Mist Usermac Label Manager - add and remove MACs on usermac labels.
 
-A companion to app.py that only manages the org's Client List: pick a label,
-see the MACs it tags, add MACs to it or take them off. It shares the API
-client, saved login and label cleanup with the PSK manager.
+A companion to app.py for desktop support staff: pick an existing label,
+see the MACs it tags, add MACs to it or take them off. Creating labels and
+label cleanup are left to the PSK manager. It shares the API client and
+saved login with the PSK manager.
 
 Run with:  python labels_app.py
 """
@@ -13,9 +14,8 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 
 from common import (
-    BOX_BG, BOX_FG, MONO_FONT, MUTED, CleanupDialog, MistAppBase, centre_on,
-    format_epoch, format_mac, group_by_label, parse_label_clients, tag_summary,
-    validate_label,
+    BOX_BG, BOX_FG, MONO_FONT, MUTED, MistAppBase, centre_on, format_epoch,
+    format_mac, group_by_label, parse_label_clients, tag_summary,
 )
 
 # Names in the remove confirmation before "... and N more".
@@ -26,7 +26,7 @@ class LabelManagerApp(MistAppBase):
     def __init__(self):
         super().__init__("Mist Usermac Label Manager", "1100x700", (900, 600))
         self.usermacs = []       # Client List rows, as fetched
-        self.label_clients = {}  # label -> [(mac, name)]; CleanupDialog reads this
+        self.label_clients = {}  # label -> [(mac, name)]
         self.psks_by_label = {}  # label -> [PSK name]
         self.current = None      # label shown on the right
 
@@ -87,14 +87,8 @@ class LabelManagerApp(MistAppBase):
 
         buttons = ttk.Frame(left)
         buttons.grid(row=2, column=0, sticky="ew", pady=(6, 0))
-        self.btn_new = ttk.Button(buttons, text="New label...", command=self.on_new_label)
-        self.btn_new.pack(side="left")
         self.btn_refresh = ttk.Button(buttons, text="Refresh", command=self.on_refresh)
-        self.btn_refresh.pack(side="left", padx=(6, 0))
-        self.btn_cleanup = ttk.Button(
-            buttons, text="Label cleanup...", command=self.on_cleanup
-        )
-        self.btn_cleanup.pack(side="left", padx=(6, 0))
+        self.btn_refresh.pack(side="left")
 
         # ----- MACs -----
         right = ttk.LabelFrame(body, padding=10)
@@ -146,8 +140,7 @@ class LabelManagerApp(MistAppBase):
     def _set_connected(self, connected):
         super()._set_connected(connected)
         state = "normal" if connected else "disabled"
-        for widget in (self.btn_new, self.btn_refresh, self.btn_cleanup):
-            widget.configure(state=state)
+        self.btn_refresh.configure(state=state)
         self._sync_mac_buttons()
 
     def _on_org_changed(self):
@@ -182,10 +175,6 @@ class LabelManagerApp(MistAppBase):
             "Loading Client List ...", work,
             lambda result: self._on_loaded(result, done_message),
         )
-
-    def _load_labels(self):
-        """Called by CleanupDialog after it changes the Client List."""
-        self.on_refresh()
 
     def _on_loaded(self, result, done_message=None):
         usermacs, psks = result
@@ -262,10 +251,6 @@ class LabelManagerApp(MistAppBase):
 
     # ---------------- actions ----------------
 
-    def on_new_label(self):
-        if self.client and self.org_id:
-            AddMacsDialog(self, None, self._add)
-
     def on_add_macs(self):
         if self.current:
             AddMacsDialog(self, self.current, self._add)
@@ -285,6 +270,18 @@ class LabelManagerApp(MistAppBase):
         rows = [rows_by_id[iid] for iid in self.tree_macs.selection() if iid in rows_by_id]
         if not (label and rows):
             messagebox.showinfo("Remove MACs", "Select one or more MACs first.", parent=self)
+            return
+        # Mist keeps a label only while it tags a MAC, and this app cannot
+        # create labels, so emptying one would delete it for good from here.
+        tagged = sum(1 for row in self.usermacs if label in (row.get("labels") or []))
+        if len(rows) >= tagged:
+            messagebox.showwarning(
+                "Remove MACs",
+                f"'{label}' must keep at least one MAC. Removing "
+                f"{'it' if tagged == 1 else 'all of them'} would delete the label.\n\n"
+                "Leave one MAC selected out, or ask a network admin to remove the label.",
+                parent=self,
+            )
             return
 
         delete_empty = bool(self.var_delete_empty.get())
@@ -334,29 +331,24 @@ class LabelManagerApp(MistAppBase):
     def _after_change(self, message):
         self.on_refresh(done_message=message)
 
-    def on_cleanup(self):
-        if self.client and self.org_id:
-            CleanupDialog(self)
-
 
 class AddMacsDialog(tk.Toplevel):
-    """Tag MACs with a label; with label=None it asks for a new label name too."""
+    """Tag MACs with an existing label."""
 
     def __init__(self, app, label, on_ok):
         super().__init__(app)
         self.app = app
         self.label = label
         self.on_ok = on_ok
-        self.var_label = tk.StringVar(value=label or "")
 
-        self.title(f"Add MACs to '{label}'" if label else "New label")
+        self.title(f"Add MACs to '{label}'")
         self.transient(app)
         self.minsize(420, 340)
         self.protocol("WM_DELETE_WINDOW", self.close)
         self._build()
         centre_on(self, app)
         self.grab_set()
-        (self.txt if label else self.ent_label).focus_set()
+        self.txt.focus_set()
 
     def _build(self):
         outer = ttk.Frame(self, padding=12)
@@ -365,10 +357,9 @@ class AddMacsDialog(tk.Toplevel):
         outer.rowconfigure(2, weight=1)
 
         ttk.Label(outer, text="Label").grid(row=0, column=0, sticky="w", padx=(0, 6))
-        self.ent_label = ttk.Entry(outer, textvariable=self.var_label)
-        self.ent_label.grid(row=0, column=1, sticky="ew")
-        if self.label:
-            self.ent_label.configure(state="disabled")
+        ttk.Label(outer, text=self.label, font=("TkDefaultFont", 10, "bold")).grid(
+            row=0, column=1, sticky="w"
+        )
 
         ttk.Label(
             outer,
@@ -390,9 +381,7 @@ class AddMacsDialog(tk.Toplevel):
         ttk.Button(buttons, text="Cancel", command=self.close).pack(side="right", padx=(0, 6))
 
     def on_add(self):
-        label = self.var_label.get().strip()
         try:
-            validate_label(label)
             clients = parse_label_clients(self.txt.get("1.0", "end"))
         except ValueError as exc:
             messagebox.showwarning("Check the form", str(exc), parent=self)
@@ -400,12 +389,12 @@ class AddMacsDialog(tk.Toplevel):
         if not clients:
             messagebox.showwarning(
                 "Check the form",
-                "Enter at least one MAC address. A label only exists while it tags a MAC.",
+                "Enter at least one MAC address.",
                 parent=self,
             )
             return
         self.close()
-        self.on_ok(label, clients)
+        self.on_ok(self.label, clients)
 
     def close(self):
         try:
