@@ -41,6 +41,7 @@ DEFAULTS = {
     "token": "",
     "org_id": "",
     "remember_token": True,
+    "theme": "Light",       # Light, Dark or System; shared by both apps
 }
 
 

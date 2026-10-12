@@ -14,9 +14,11 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 
 from common import (
-    BOX_BG, BOX_FG, MONO_FONT, MUTED, WARN, MistAppBase, centre_on, format_epoch,
-    format_mac, group_by_label, normalize_mac, parse_label_clients, tag_summary,
+    MONO_FONT, MistAppBase, centre_on, format_epoch, format_mac, group_by_label,
+    normalize_mac, parse_label_clients, tag_summary,
 )
+import theme
+from theme import text_box
 
 # Names in the remove confirmation before "... and N more".
 CONFIRM_LIST = 12
@@ -78,7 +80,7 @@ class LabelManagerApp(MistAppBase):
         find.columnconfigure(1, weight=1)
         ttk.Label(find, text="Find").grid(row=0, column=0, padx=(0, 6))
         ttk.Entry(find, textvariable=self.var_filter).grid(row=0, column=1, sticky="ew")
-        ttk.Label(left, text="Matches a label, MAC or device name.", foreground=MUTED).grid(
+        ttk.Label(left, text="Matches a label, MAC or device name.", style="Muted.TLabel").grid(
             row=3, column=0, sticky="w", pady=(4, 0)
         )
 
@@ -123,7 +125,7 @@ class LabelManagerApp(MistAppBase):
             row=0, column=2, padx=(6, 0)
         )
 
-        ttk.Label(right, textvariable=self.var_used_by, foreground=MUTED,
+        ttk.Label(right, textvariable=self.var_used_by, style="Muted.TLabel",
                   wraplength=620, justify="left").grid(row=1, column=0, sticky="w")
 
         actions = ttk.Frame(right)
@@ -157,9 +159,9 @@ class LabelManagerApp(MistAppBase):
         self.tree_macs.configure(yscrollcommand=yscroll.set)
         self.tree_macs.bind("<Delete>", lambda _e: self.on_remove_macs())
         # A MAC on more than one label is what Find MAC is meant to catch.
-        self.tree_macs.tag_configure("multi", foreground=WARN)
+        self.tree_macs.tag_configure("multi", foreground=theme.color("warn"))
 
-        ttk.Label(right, textvariable=self.var_count, foreground=MUTED).grid(
+        ttk.Label(right, textvariable=self.var_count, style="Muted.TLabel").grid(
             row=4, column=0, sticky="w", pady=(4, 0)
         )
 
@@ -182,6 +184,9 @@ class LabelManagerApp(MistAppBase):
         self.current = None
         self._fill_labels()
         self._show_label()
+
+    def _on_theme_changed(self):
+        self.tree_macs.tag_configure("multi", foreground=theme.color("warn"))
 
     def _sync_mac_buttons(self):
         # Find MAC spans every label, while Add and Remove act on one, so they
@@ -471,12 +476,12 @@ class AddMacsDialog(tk.Toplevel):
             text="One MAC per line, optionally followed by a device name, e.g. "
                  "'aa:bb:cc:dd:ee:ff printer5'. MACs already in the Client List "
                  "keep their other labels.",
-            foreground=MUTED, wraplength=400, justify="left",
+            style="Muted.TLabel", wraplength=400, justify="left",
         ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(8, 4))
 
-        self.txt = tk.Text(
+        self.txt = text_box(
             outer, width=44, height=12, wrap="none", undo=True,
-            background=BOX_BG, foreground=BOX_FG, font=MONO_FONT, insertbackground=BOX_FG,
+            font=MONO_FONT,
         )
         self.txt.grid(row=2, column=0, columnspan=2, sticky="nsew")
 
