@@ -9,6 +9,14 @@
   labels. Both features remain in the PSK Manager. The Add MACs dialog now
   always targets the selected label.
 
+### Added
+
+- **Find MAC** in the Usermac Label Manager: search every label for a full or
+  partial MAC, in any format, and see all the labels each match carries.
+  Clicking a label opens it with the found MAC selected.
+- MACs on more than one label are shown in orange and counted.
+- Adding a MAC that already has another label lists those labels and asks first.
+
 ### Changed
 
 - The Usermac Label Manager refuses to remove a label's last MAC, since that

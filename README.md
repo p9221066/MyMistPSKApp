@@ -169,10 +169,18 @@ those stay in the PSK Manager.
 - **Labels** (left): every label in the org with its MAC count. **Find**
   narrows the list by label name, MAC (any format) or device name.
 - **MACs** (right): the MACs the selected label tags, their device names, any
-  other labels they carry, and which PSKs use the label.
+  other labels they carry, and which PSKs use the label. MACs that are also on
+  another label are shown in orange.
+- **Find MAC** (top right) searches every label at once. Type a full or partial
+  MAC in any format (`aabbcc`, `aa:bb:cc`, `AA-BB-CC`) to list each matching
+  device with **all** its labels. Matches on more than one label are shown in
+  orange and counted. Add and Remove are off while searching; click a label on
+  the left to open it with the found MAC already selected. **Clear** or Esc
+  ends the search.
 - **Add MACs...** tags MACs with the selected label: one per line, optionally
   followed by a device name. MACs not yet in the Client List get a new entry;
-  existing ones keep their other labels.
+  existing ones keep their other labels. If a MAC already has another label,
+  the app lists them and asks before adding it to a second one.
 - **Remove selected** (or the Delete key) takes the label off the selected
   MACs, after a confirmation that names the affected PSKs. Tick **Delete Client
   List entries left with no labels** to delete entries that end up with no

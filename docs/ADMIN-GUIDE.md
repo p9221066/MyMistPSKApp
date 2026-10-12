@@ -106,6 +106,9 @@ changes nothing in Mist, but should not press **Run now**.
 - **A MAC was removed by mistake.** Add it back with **Add MACs...**, or, if it
   was removed by your own cleanup run, use **Undo last run** in the PSK
   Manager's Label cleanup.
+- **A device is on the wrong label, or on two.** Type its MAC in **Find MAC**
+  to see every label it has. Click the label it should not be on, then
+  **Remove selected**; the device is already selected.
 - **"must keep at least one MAC".** The Usermac Label Manager will not remove
   a label's last MAC, because that would delete the label. Add the replacement
   device first, then remove the old one. To retire a label, ask whoever manages

@@ -14,12 +14,24 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 
 from common import (
-    BOX_BG, BOX_FG, MONO_FONT, MUTED, MistAppBase, centre_on, format_epoch,
-    format_mac, group_by_label, parse_label_clients, tag_summary,
+    BOX_BG, BOX_FG, MONO_FONT, MUTED, WARN, MistAppBase, centre_on, format_epoch,
+    format_mac, group_by_label, normalize_mac, parse_label_clients, tag_summary,
 )
 
 # Names in the remove confirmation before "... and N more".
 CONFIRM_LIST = 12
+HEX_DIGITS = set("0123456789abcdef")
+
+
+def mac_needle(text):
+    """Find MAC text -> lowercase hex digits; "" if blank, None if not part of a MAC.
+
+    Separators are ignored, so aa:bb, aa-bb and aabb all find the same entries.
+    """
+    compact = normalize_mac(text)
+    if not compact:
+        return ""
+    return compact if set(compact) <= HEX_DIGITS else None
 
 
 class LabelManagerApp(MistAppBase):
@@ -35,6 +47,8 @@ class LabelManagerApp(MistAppBase):
         self.var_used_by = tk.StringVar()
         self.var_macs_title = tk.StringVar(value="MACs")
         self.var_delete_empty = tk.BooleanVar(value=False)
+        self.var_mac_find = tk.StringVar()
+        self.var_mac_find.trace_add("write", lambda *_: self._show_label())
         self.var_count = tk.StringVar()
 
         self.columnconfigure(0, weight=1)
@@ -84,6 +98,7 @@ class LabelManagerApp(MistAppBase):
         yscroll.grid(row=0, column=1, sticky="ns")
         self.tree_labels.configure(yscrollcommand=yscroll.set)
         self.tree_labels.bind("<<TreeviewSelect>>", self._on_label_selected)
+        self.tree_labels.bind("<ButtonRelease-1>", self._on_label_clicked)
 
         buttons = ttk.Frame(left)
         buttons.grid(row=2, column=0, sticky="ew", pady=(6, 0))
@@ -95,13 +110,24 @@ class LabelManagerApp(MistAppBase):
         right.configure(labelwidget=ttk.Label(right, textvariable=self.var_macs_title))
         right.grid(row=0, column=1, sticky="nsew")
         right.columnconfigure(0, weight=1)
-        right.rowconfigure(2, weight=1)
+        right.rowconfigure(3, weight=1)
+
+        find = ttk.Frame(right)
+        find.grid(row=0, column=0, sticky="ew", pady=(0, 6))
+        find.columnconfigure(1, weight=1)
+        ttk.Label(find, text="Find MAC").grid(row=0, column=0, padx=(0, 6))
+        self.ent_mac_find = ttk.Entry(find, textvariable=self.var_mac_find, font=MONO_FONT)
+        self.ent_mac_find.grid(row=0, column=1, sticky="ew")
+        self.ent_mac_find.bind("<Escape>", lambda _e: self.var_mac_find.set(""))
+        ttk.Button(find, text="Clear", command=lambda: self.var_mac_find.set("")).grid(
+            row=0, column=2, padx=(6, 0)
+        )
 
         ttk.Label(right, textvariable=self.var_used_by, foreground=MUTED,
-                  wraplength=620, justify="left").grid(row=0, column=0, sticky="w")
+                  wraplength=620, justify="left").grid(row=1, column=0, sticky="w")
 
         actions = ttk.Frame(right)
-        actions.grid(row=1, column=0, sticky="ew", pady=(6, 6))
+        actions.grid(row=2, column=0, sticky="ew", pady=(6, 6))
         self.btn_add = ttk.Button(actions, text="Add MACs...", command=self.on_add_macs)
         self.btn_add.pack(side="left")
         self.btn_remove = ttk.Button(
@@ -114,7 +140,7 @@ class LabelManagerApp(MistAppBase):
         ).pack(side="left", padx=(12, 0))
 
         box = ttk.Frame(right)
-        box.grid(row=2, column=0, sticky="nsew")
+        box.grid(row=3, column=0, sticky="nsew")
         box.columnconfigure(0, weight=1)
         box.rowconfigure(0, weight=1)
         columns = ("mac", "name", "other", "updated")
@@ -130,9 +156,11 @@ class LabelManagerApp(MistAppBase):
         yscroll.grid(row=0, column=1, sticky="ns")
         self.tree_macs.configure(yscrollcommand=yscroll.set)
         self.tree_macs.bind("<Delete>", lambda _e: self.on_remove_macs())
+        # A MAC on more than one label is what Find MAC is meant to catch.
+        self.tree_macs.tag_configure("multi", foreground=WARN)
 
         ttk.Label(right, textvariable=self.var_count, foreground=MUTED).grid(
-            row=3, column=0, sticky="w", pady=(4, 0)
+            row=4, column=0, sticky="w", pady=(4, 0)
         )
 
     # ---------------- base-class hooks ----------------
@@ -156,9 +184,14 @@ class LabelManagerApp(MistAppBase):
         self._show_label()
 
     def _sync_mac_buttons(self):
-        state = "normal" if (self.client and self.current) else "disabled"
+        # Find MAC spans every label, while Add and Remove act on one, so they
+        # wait until a label is picked on the left.
+        ok = self.client and self.current and not self._mac_lookup_active()
         for widget in (self.btn_add, self.btn_remove):
-            widget.configure(state=state)
+            widget.configure(state="normal" if ok else "disabled")
+
+    def _mac_lookup_active(self):
+        return bool(self.var_mac_find.get().strip())
 
     # ---------------- loading ----------------
 
@@ -222,8 +255,27 @@ class LabelManagerApp(MistAppBase):
             self.current = selection[0]
             self._show_label()
 
+    def _on_label_clicked(self, event):
+        """Clicking a label during Find MAC opens it with the found MACs selected."""
+        label = self.tree_labels.identify_row(event.y)
+        if not (label and self._mac_lookup_active()):
+            return
+        needle = mac_needle(self.var_mac_find.get())
+        self.current = label
+        self.var_mac_find.set("")          # redraws the label view
+        if needle:
+            hits = [iid for iid in self.tree_macs.get_children()
+                    if needle in normalize_mac(str(self.tree_macs.item(iid)["values"][0]))]
+            self.tree_macs.selection_set(hits)
+            if hits:
+                self.tree_macs.see(hits[0])
+
     def _show_label(self):
         self.tree_macs.delete(*self.tree_macs.get_children())
+        if self._mac_lookup_active():
+            self._show_mac_lookup()
+            return
+        self.tree_macs.heading("other", text="Other labels")
         label = self.current
         if not label:
             self.var_macs_title.set("MACs")
@@ -245,9 +297,45 @@ class LabelManagerApp(MistAppBase):
             self.tree_macs.insert("", "end", iid=row["id"], values=(
                 format_mac(row.get("mac")), row.get("name") or "",
                 ", ".join(other), format_epoch(row.get("updated_at")),
-            ))
-        self.var_count.set(f"{len(rows)} MAC(s)")
+            ), tags=("multi",) if other else ())
+        multi = sum(1 for row in rows if len(row.get("labels") or []) > 1)
+        self.var_count.set(
+            f"{len(rows)} MAC(s)" + (f" - {multi} also on another label" if multi else "")
+        )
         self._sync_mac_buttons()
+
+    def _show_mac_lookup(self):
+        """Every Client List entry whose MAC contains what was typed, across all labels."""
+        text = self.var_mac_find.get().strip()
+        needle = mac_needle(text)
+        self.tree_macs.heading("other", text="Labels")
+        self.var_macs_title.set(f"MACs matching '{text}'")
+        self._sync_mac_buttons()
+        if needle is None:
+            self.var_used_by.set(
+                "Not a MAC address. Type hex digits in any format: aabbcc, aa:bb:cc, aa-bb-cc."
+            )
+            self.var_count.set("")
+            return
+        self.var_used_by.set(
+            "Searching every label. Click a label on the left to add or remove MACs there."
+        )
+        rows = [row for row in self.usermacs if needle in (row.get("mac") or "")]
+        rows.sort(key=lambda row: row.get("mac") or "")
+        for row in rows:
+            labels = row.get("labels") or []
+            self.tree_macs.insert("", "end", iid=row["id"], values=(
+                format_mac(row.get("mac")), row.get("name") or "",
+                ", ".join(labels) or "(none)", format_epoch(row.get("updated_at")),
+            ), tags=("multi",) if len(labels) > 1 else ())
+        multi = sum(1 for row in rows if len(row.get("labels") or []) > 1)
+        if not rows:
+            self.var_count.set("No MAC in the Client List matches.")
+        else:
+            self.var_count.set(
+                f"{len(rows)} MAC(s) match"
+                + (f" - {multi} on more than one label" if multi else "")
+            )
 
     # ---------------- actions ----------------
 
@@ -256,6 +344,23 @@ class LabelManagerApp(MistAppBase):
             AddMacsDialog(self, self.current, self._add)
 
     def _add(self, label, clients):
+        by_mac = {row.get("mac"): row for row in self.usermacs}
+        on_other = []
+        for mac, _name in clients:
+            others = [lab for lab in (by_mac.get(mac) or {}).get("labels") or [] if lab != label]
+            if others:
+                on_other.append(f"  - {format_mac(mac)}: {', '.join(others)}")
+        if on_other:
+            extra = len(on_other) - CONFIRM_LIST
+            if not messagebox.askyesno(
+                "Already on another label",
+                f"{len(on_other)} of these MAC(s) already have another label:\n\n"
+                + "\n".join(on_other[:CONFIRM_LIST])
+                + (f"\n  ... and {extra} more" if extra > 0 else "")
+                + f"\n\nAdd them to '{label}' as well? They keep their other labels.",
+                icon="warning", default="no", parent=self,
+            ):
+                return
         org_id = self.org_id
         self.current = label
         self._run(
