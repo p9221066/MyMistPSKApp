@@ -144,6 +144,103 @@ class MistClient:
                 self._request("DELETE", f"/api/v1/orgs/{org_id}/psks/{psk_id}")
             return None
 
+    # ---------- Client List (usermacs) ----------
+    #
+    # A usermac label is not an object of its own in Mist: it exists only as a
+    # tag on a Client List entry, and every entry is keyed by one MAC address.
+    # "Creating a label" therefore means tagging MACs with it.
+
+    def list_usermacs(self, org_id, limit=1000):
+        """Every Client List entry. The search route pages by a `next` link."""
+        path = f"/api/v1/orgs/{org_id}/usermacs/search"
+        body = self._request("GET", path, params={"limit": limit}) or {}
+        rows = list(body.get("results") or [])
+        for _ in range(100):  # stop guard, matching _paged
+            next_path = body.get("next")
+            if not next_path:
+                break
+            body = self._request("GET", next_path) or {}
+            batch = body.get("results") or []
+            if not batch:
+                break
+            rows.extend(batch)
+        return [row for row in rows if isinstance(row, dict)]
+
+    def create_usermac(self, org_id, payload):
+        return self._request("POST", f"/api/v1/orgs/{org_id}/usermacs", json=payload)
+
+    def update_usermac(self, org_id, usermac_id, payload):
+        return self._request(
+            "PUT", f"/api/v1/orgs/{org_id}/usermacs/{usermac_id}", json=payload
+        )
+
+    def delete_usermac(self, org_id, usermac_id):
+        return self._request("DELETE", f"/api/v1/orgs/{org_id}/usermacs/{usermac_id}")
+
+    # ---------- client history ----------
+
+    def client_sightings(self, org_id, mac, duration="30d"):
+        """(last_seen epoch or None, {psk_id, ...}) for one wireless client MAC.
+
+        Mist keeps only a limited window of client history, so None means "not
+        seen within `duration`", not "never connected".
+        """
+        body = self._request(
+            "GET", f"/api/v1/orgs/{org_id}/clients/search",
+            params={"mac": mac, "duration": duration, "limit": 10},
+        ) or {}
+        last_seen, psk_ids = None, set()
+        for row in body.get("results") or []:
+            if not isinstance(row, dict) or row.get("mac") != mac:
+                continue
+            stamp = row.get("timestamp")
+            if isinstance(stamp, (int, float)) and (last_seen is None or stamp > last_seen):
+                last_seen = float(stamp)
+            psk_ids.update(pid for pid in row.get("psk_id") or [] if pid)
+        return last_seen, psk_ids
+
+    def tag_usermacs(self, org_id, assignments):
+        """Add labels to Client List entries, creating entries that are missing.
+
+        `assignments` maps label -> [(mac, name)]. A MAC already in the Client
+        List keeps its other labels and gains the new ones; an unknown MAC gets
+        a new entry. Returns (created, updated) counts.
+        """
+        wanted = {}  # mac -> {"labels": [...], "name": str}
+        for label, clients in assignments.items():
+            for mac, name in clients:
+                entry = wanted.setdefault(mac, {"labels": [], "name": ""})
+                if label not in entry["labels"]:
+                    entry["labels"].append(label)
+                entry["name"] = entry["name"] or name
+        if not wanted:
+            return 0, 0
+
+        existing = {row.get("mac"): row for row in self.list_usermacs(org_id)}
+        created = updated = 0
+        for mac, entry in wanted.items():
+            row = existing.get(mac)
+            if row is None:
+                payload = {"mac": mac, "labels": entry["labels"]}
+                if entry["name"]:
+                    payload["name"] = entry["name"]
+                self.create_usermac(org_id, payload)
+                created += 1
+                continue
+            labels = list(row.get("labels") or [])
+            added = [label for label in entry["labels"] if label not in labels]
+            if not added:
+                continue
+            payload = {
+                key: row[key]
+                for key in ("mac", "name", "notes", "vlan", "radius_group")
+                if row.get(key) not in (None, "")
+            }
+            payload["labels"] = labels + added
+            self.update_usermac(org_id, row["id"], payload)
+            updated += 1
+        return created, updated
+
 
 def _safe_json(resp):
     try:

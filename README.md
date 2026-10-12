@@ -17,6 +17,10 @@ Runs on Windows, macOS and Linux.
 - See the bound clients in a **MACs** column, and edit that list in place
 - Delete selected PSKs (with a confirmation prompt)
 - Export the current list to CSV
+- Pick existing usermac labels and see the MACs each one tags
+- Create new usermac labels by tagging MACs in the Client List as you save
+- Clean up labels: remove MACs that have not connected for a set number of
+  days, with a preview, a safety limit and undo
 
 ## Install
 
@@ -122,6 +126,33 @@ even when only the MAC list changes. So:
 Which of these you get depends on your org, and the app handles both. The first
 MAC edit you make will show you which one applies.
 
+## Usermac labels and label cleanup
+
+A usermac label only exists as a tag on Client List entries, each keyed by one
+MAC. When a `usermac_labels` PSK names a label that no entry carries yet, the
+app asks which MACs to tag with it before saving. The **Existing ▾** menu next
+to the labels field lists the labels in use and the MACs each one tags.
+
+**Label cleanup...** removes MACs from labels after a number of days without a
+connection:
+
+- Set a default threshold, and per-label overrides (`0` = never prune that label).
+- **Preview** lists what would be removed and which PSKs use each label. Nothing
+  changes in Mist until **Run now**, which re-checks and asks for confirmation.
+- A run that would remove more than the set share of labelled MACs (20% by
+  default) is refused, and any API error stops the run before anything changes.
+- Every removal is logged to `cleanup-log.csv`; **Undo last run** puts the
+  labels back, recreating deleted entries.
+
+Mist keeps only a short client history, so the app checks the last 30 days and
+keeps its own per-org record of when each MAC was last seen
+(`ledger-<org_id>.json`, next to the config). A MAC never seen counts as idle
+for at most 30 days on the first run, and builds up from there. The threshold is
+a per-org setting (`cleanup-<org_id>.json`).
+
+Removing a label from a MAC affects every PSK and policy that uses that label.
+Devices with randomized MACs may also show as idle after rotating their address.
+
 ## Where settings are stored
 
 Cloud region, selected org, and (if "Remember token on this PC" is ticked) the
@@ -161,6 +192,8 @@ authenticate against another.
 | `app.py` | Tkinter UI and form logic |
 | `mist_api.py` | Mist REST client: auth, pagination, error handling |
 | `settings.py` | Local config load/save |
+| `cleanup.py` | Label cleanup: policy, last-seen ledger, plan, apply, undo |
+| `CHANGELOG.md` | What changed between versions |
 | `run.bat` | Windows launcher |
 | `run.command` | macOS / Linux launcher |
 
@@ -175,6 +208,11 @@ authenticate against another.
 | Create PSK | `POST /api/v1/orgs/{org_id}/psks` |
 | Update a PSK's client list | `PUT /api/v1/orgs/{org_id}/psks/{psk_id}` |
 | Delete PSKs | `POST /api/v1/orgs/{org_id}/psks/delete` |
+| List Client List entries and labels | `GET /api/v1/orgs/{org_id}/usermacs/search` |
+| Tag a new MAC with labels | `POST /api/v1/orgs/{org_id}/usermacs` |
+| Change an entry's labels | `PUT /api/v1/orgs/{org_id}/usermacs/{usermac_id}` |
+| Delete an entry (cleanup) | `DELETE /api/v1/orgs/{org_id}/usermacs/{usermac_id}` |
+| Last seen for a MAC (cleanup) | `GET /api/v1/orgs/{org_id}/clients/search?mac=...&duration=30d` |
 
 Requests authenticate with the `Authorization: Token <api-token>` header.
 
@@ -197,6 +235,12 @@ Two paths are therefore unproven until you run them against a real org:
 2. **Saving a MAC list.** See the passphrase caveat above; which branch applies
    depends on whether your org's API returns existing passphrases.
 
+The usermac label features were checked against a live org **read-only**:
+listing the Client List and following its `next` pages, the Existing menu, and
+a cleanup Preview. Writing to the Client List (tagging new labels, cleanup Run
+now and Undo) was tested only against a fake client, so try it on a test label
+first. The new dialogs were exercised in a hidden window, not inspected on screen.
+
 ## Limitations
 
 - Creates org-level PSKs only, not site-level ones
@@ -205,3 +249,10 @@ Two paths are therefore unproven until you run them against a real org:
   (VLAN, role, expiry) are create-and-delete only.
 - No bulk import from CSV. Mist has a `POST .../psks/import` endpoint if that
   becomes useful.
+- Label cleanup runs only from the app; there is no scheduled or command-line
+  mode yet.
+- Cleanup looks up each labelled MAC separately (one API call per MAC), which
+  counts against Mist's hourly API limit on very large Client Lists.
+- With "only count connections made with a PSK that uses the label", Mist
+  reports which PSKs a MAC used over 30 days but a single last-seen time, so a
+  device that later moved to another SSID still counts as active.

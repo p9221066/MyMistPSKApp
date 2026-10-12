@@ -14,6 +14,7 @@ import tkinter as tk
 from datetime import datetime
 from tkinter import filedialog, messagebox, ttk
 
+import cleanup
 import settings
 from mist_api import CLOUDS, USAGE_VALUES, MistClient, MistError
 
@@ -172,6 +173,59 @@ def parse_mac_list(text, usage):
     return unique
 
 
+def parse_label_clients(text):
+    """Lines of 'MAC [name]' -> [(mac, name)] for one label. Raises ValueError.
+
+    Client List entries are keyed by one exact MAC, so prefix patterns that a
+    'macs' PSK accepts are rejected here.
+    """
+    clients, seen = [], set()
+    for line in text.splitlines():
+        parts = line.strip().split(None, 1)
+        if not parts:
+            continue
+        mac = normalize_mac(parts[0])
+        if not HEX_MAC.match(mac):
+            raise ValueError(
+                f"'{parts[0]}' is not a MAC address.\n\n"
+                "Use 12 hex digits (aabbccddeeff or aa:bb:cc:dd:ee:ff). "
+                "Patterns are not allowed in the Client List."
+            )
+        if mac not in seen:
+            seen.add(mac)
+            clients.append((mac, parts[1].strip() if len(parts) > 1 else ""))
+    return clients
+
+
+# MACs listed under each label in the Existing menu before "... and N more".
+LABEL_MENU_MACS = 30
+
+
+def format_mac(mac):
+    """'aabbccddeeff' -> 'aa:bb:cc:dd:ee:ff'. Anything else is shown as-is."""
+    mac = str(mac or "")
+    if not HEX_MAC.match(mac):
+        return mac
+    return ":".join(mac[i:i + 2] for i in range(0, 12, 2))
+
+
+def group_by_label(usermacs):
+    """Client List rows -> {label: [(mac, name)]}, MACs sorted per label."""
+    grouped = {}
+    for row in usermacs:
+        for label in row.get("labels") or []:
+            if label:
+                grouped.setdefault(label, []).append((row.get("mac") or "", row.get("name") or ""))
+    return {label: sorted(clients) for label, clients in grouped.items()}
+
+
+def tag_summary(tagged):
+    created, updated = tagged
+    if not (created or updated):
+        return ""
+    return f" Client List: {created} entr{'y' if created == 1 else 'ies'} added, {updated} updated."
+
+
 def format_epoch(value):
     if not value:
         return ""
@@ -197,6 +251,8 @@ class PSKApp(tk.Tk):
         self.org_id = None
         self.orgs = []          # [(org_id, name)]
         self.psk_rows = []      # raw dicts from the API, index-aligned with the tree
+        self.known_labels = []  # usermac labels in the org's Client List, sorted
+        self.label_clients = {} # label -> [(mac, name)] from the Client List
         self.pending = 0
         self._sort_column = None
         self._sort_reverse = False
@@ -350,6 +406,12 @@ class PSKApp(tk.Tk):
         self.lbl_macs.grid(row=row, column=0, sticky="w", padx=(0, 6), pady=3)
         self.ent_macs = ttk.Entry(frame, textvariable=self.var_macs)
         self.ent_macs.grid(row=row, column=1, columnspan=2, sticky="ew", pady=3)
+        # Only gridded for usage 'usermac_labels'; see _sync_usage_state.
+        self.btn_labels = ttk.Menubutton(frame, text="Existing ▾")
+        self.mnu_labels = tk.Menu(self.btn_labels, tearoff=False)
+        self.btn_labels.configure(menu=self.mnu_labels)
+        self.btn_labels.grid(row=row, column=2, sticky="w", padx=(6, 0), pady=3)
+        self.btn_labels.grid_remove()
 
         row += 1
         self.lbl_macs_hint = ttk.Label(frame, text="", foreground=MUTED)
@@ -464,6 +526,10 @@ class PSKApp(tk.Tk):
         self.btn_delete.pack(side="left")
         self.btn_export = ttk.Button(actions, text="Export CSV", command=self.on_export)
         self.btn_export.pack(side="left", padx=(6, 0))
+        self.btn_cleanup = ttk.Button(
+            actions, text="Label cleanup...", command=self.on_label_cleanup
+        )
+        self.btn_cleanup.pack(side="left", padx=(6, 0))
 
         columns = ("name", "ssid", "vlan", "usage", "macs", "role", "max_usage",
                    "expires", "note")
@@ -536,7 +602,8 @@ class PSKApp(tk.Tk):
             "multi": ("MAC address", "Not used when usage is 'multi'."),
             "single": ("MAC address", "One client MAC; blank auto-binds on first use."),
             "macs": ("MAC addresses", "Comma separated; patterns like 1122* allowed."),
-            "usermac_labels": ("Usermac labels", "Comma separated labels, e.g. iot, students."),
+            "usermac_labels": ("Usermac labels",
+                               "Comma separated labels; new ones are added to the Client List."),
         }
         usage = self.var_usage.get()
         text, hint = hints.get(usage, hints["multi"])
@@ -545,11 +612,67 @@ class PSKApp(tk.Tk):
         enabled = usage != "multi"
         self.ent_macs.configure(state="normal" if enabled else "disabled")
         self.lbl_macs.configure(foreground="" if enabled else "#999999")
+        if usage == "usermac_labels":
+            self.ent_macs.grid_configure(columnspan=1)
+            self.btn_labels.grid()
+        else:
+            self.ent_macs.grid_configure(columnspan=2)
+            self.btn_labels.grid_remove()
+
+    def _set_known_labels(self, usermacs):
+        """Rebuild the label cache and the Existing menu from Client List rows.
+
+        Each label gets a submenu: an entry that adds it to the form, then the
+        MACs it currently tags, so the user can see what a label matches.
+        """
+        self.label_clients = group_by_label(usermacs)
+        self.known_labels = sorted(self.label_clients, key=str.lower)
+
+        # Old submenus are children of the menu; delete() alone leaks them.
+        for child in self.mnu_labels.winfo_children():
+            child.destroy()
+        self.mnu_labels.delete(0, "end")
+        if not self.known_labels:
+            self.mnu_labels.add_command(label="(no labels in the Client List)", state="disabled")
+        for label in self.known_labels:
+            clients = self.label_clients[label]
+            sub = tk.Menu(self.mnu_labels, tearoff=False)
+            sub.add_command(
+                label=f"Add '{label}'", command=lambda value=label: self._add_label(value)
+            )
+            sub.add_separator()
+            for mac, name in clients[:LABEL_MENU_MACS]:
+                # No command: these rows are for reading, clicking just closes the menu.
+                sub.add_command(label=f"{format_mac(mac)}   {name}".rstrip())
+            if len(clients) > LABEL_MENU_MACS:
+                sub.add_command(
+                    label=f"... and {len(clients) - LABEL_MENU_MACS} more", state="disabled"
+                )
+            count = f"{len(clients)} MAC{'' if len(clients) == 1 else 's'}"
+            self.mnu_labels.add_cascade(label=f"{label}   ({count})", menu=sub)
+
+    def _add_label(self, label):
+        entries = split_entries(self.var_macs.get())
+        if label not in entries:
+            entries.append(label)
+        self.var_macs.set(", ".join(entries))
+
+    def _load_labels(self):
+        org_id = self.org_id
+        self._run(
+            "Loading usermac labels ...",
+            lambda: self.client.list_usermacs(org_id),
+            self._on_labels,
+        )
+
+    def _on_labels(self, usermacs):
+        self._set_known_labels(usermacs)
+        self.var_status.set(f"{len(self.known_labels)} usermac label(s) in the Client List.")
 
     def _set_connected(self, connected):
         state = "normal" if connected else "disabled"
         for widget in (self.btn_create, self.btn_refresh, self.btn_delete,
-                       self.btn_export, self.btn_macs):
+                       self.btn_export, self.btn_macs, self.btn_cleanup):
             widget.configure(state=state)
         self.cmb_org.configure(state="readonly" if connected else "disabled")
 
@@ -664,6 +787,7 @@ class PSKApp(tk.Tk):
         self.org_id = None
         self.orgs = []
         self.psk_rows = []
+        self._set_known_labels([])
         self.tree.delete(*self.tree.get_children())
         self.cmb_org.configure(values=[])
         self.var_org.set("")
@@ -679,6 +803,7 @@ class PSKApp(tk.Tk):
         self.cfg["org_id"] = self.org_id
         self._save_config()
         self._load_ssids()
+        self._load_labels()
         self.on_refresh()
 
     def _load_ssids(self):
@@ -823,19 +948,60 @@ class PSKApp(tk.Tk):
             lambda fresh: MacEditor(self, fresh if isinstance(fresh, dict) else psk),
         )
 
-    def save_macs(self, dialog, psk_id, payload, count):
+    def save_macs(self, dialog, psk_id, payload, count, assignments=None):
         org_id = self.org_id
+
+        def work():
+            tagged = self.client.tag_usermacs(org_id, assignments) if assignments else (0, 0)
+            self.client.update_psk(org_id, psk_id, payload)
+            return tagged
+
         self._run(
             "Saving client list ...",
-            lambda: self.client.update_psk(org_id, psk_id, payload),
-            lambda _result: self._after_mac_save(dialog, count),
+            work,
+            lambda tagged: self._after_mac_save(dialog, count, tagged),
             on_error=dialog.set_busy_off,
         )
 
-    def _after_mac_save(self, dialog, count):
+    def _after_mac_save(self, dialog, count, tagged):
         dialog.close()
-        self.var_status.set(f"Client list saved - {count} entr{'y' if count == 1 else 'ies'}.")
+        self.var_status.set(
+            f"Client list saved - {count} entr{'y' if count == 1 else 'ies'}."
+            + tag_summary(tagged)
+        )
+        if any(tagged):
+            self._load_labels()
         self.on_refresh()
+
+    # ---------------- usermac labels ----------------
+
+    def with_label_clients(self, labels, proceed, on_cancel, parent=None):
+        """Make sure each label is on some Client List entry, then proceed.
+
+        Labels Mist has never seen would match no clients, so the user is asked
+        for MACs to tag with them. proceed(assignments) gets label -> [(mac,
+        name)], empty when nothing is new or the user chose to skip tagging.
+        """
+        org_id = self.org_id
+
+        def on_known(usermacs):
+            self._set_known_labels(usermacs)
+            missing = [label for label in labels if label not in self.label_clients]
+            if not missing:
+                proceed({})
+                return
+            LabelClientsDialog(parent or self, missing, proceed, on_cancel)
+
+        self._run(
+            "Checking Client List labels ...",
+            lambda: self.client.list_usermacs(org_id),
+            on_known,
+            on_error=on_cancel,
+        )
+
+    def on_label_cleanup(self):
+        if self.client and self.org_id:
+            CleanupDialog(self)
 
     def on_export(self):
         if not self.psk_rows:
@@ -987,16 +1153,31 @@ class PSKApp(tk.Tk):
             messagebox.showwarning("Check the form", str(exc), parent=self)
             return
 
+        self.btn_create.configure(state="disabled")
+        if payload["usage"] == "usermac_labels":
+            self.with_label_clients(
+                payload["usermac_labels"],
+                lambda assignments: self._create(payload, assignments),
+                on_cancel=lambda: self.btn_create.configure(state="normal"),
+            )
+        else:
+            self._create(payload, {})
+
+    def _create(self, payload, assignments):
         org_id = self.org_id
         passphrase = payload["passphrase"]
-        self.btn_create.configure(state="disabled")
+
+        def work():
+            tagged = self.client.tag_usermacs(org_id, assignments) if assignments else (0, 0)
+            return self.client.create_psk(org_id, payload), tagged
+
         self._run(
             f"Creating PSK '{payload['name']}' ...",
-            lambda: self.client.create_psk(org_id, payload),
-            lambda created: self._on_created(created, payload, passphrase),
+            work,
+            lambda result: self._on_created(result[0], payload, passphrase, result[1]),
         )
 
-    def _on_created(self, created, payload, passphrase):
+    def _on_created(self, created, payload, passphrase, tagged=(0, 0)):
         self.btn_create.configure(state="normal")
         created = created if isinstance(created, dict) else {}
         name = created.get("name") or payload["name"]
@@ -1008,9 +1189,13 @@ class PSKApp(tk.Tk):
             f"Passphrase: {passphrase}\n\n"
             "Copy it now - the list below does not show passphrases."
         )
-        self.var_status.set(f"PSK '{name}' created. Form cleared for the next key.")
+        self.var_status.set(
+            f"PSK '{name}' created. Form cleared for the next key." + tag_summary(tagged)
+        )
         self._reset_form(keep_result=True)
         self.ent_name.focus_set()
+        if any(tagged):
+            self._load_labels()
         self.on_refresh()
 
     def _show_result(self, text):
@@ -1094,7 +1279,8 @@ class MacEditor(tk.Toplevel):
         ).pack(side="left")
 
         hint = (
-            "One label per line."
+            "One label per line. In the Client List: "
+            + (", ".join(self.app.known_labels) or "(none)")
             if self.is_labels else
             "One entry per line. 'aabbccddeeff' or 'aa:bb:cc:dd:ee:ff', "
             "or a prefix pattern such as '1122*'."
@@ -1247,7 +1433,480 @@ class MacEditor(tk.Toplevel):
             return
 
         self._set_busy_on()
-        self.app.save_macs(self, self.psk.get("id"), payload, len(entries))
+        psk_id = self.psk.get("id")
+        if self.is_labels and entries:
+            self.app.with_label_clients(
+                entries,
+                lambda assignments: self.app.save_macs(
+                    self, psk_id, payload, len(entries), assignments
+                ),
+                on_cancel=self.set_busy_off,
+                parent=self,
+            )
+        else:
+            self.app.save_macs(self, psk_id, payload, len(entries))
+
+
+class LabelClientsDialog(tk.Toplevel):
+    """Ask for the MACs to tag with labels the Client List does not know yet.
+
+    Exactly one of `on_ok(assignments)` or `on_cancel()` runs when it closes;
+    "Save without tagging" is on_ok with no assignments.
+    """
+
+    def __init__(self, parent, labels, on_ok, on_cancel):
+        super().__init__(parent)
+        self.labels = labels
+        self.on_ok = on_ok
+        self.on_cancel_cb = on_cancel
+        self.boxes = {}
+        # A MacEditor parent holds the grab; hand it back when this closes.
+        self.prev_grab = parent.grab_current()
+
+        self.title("New usermac labels")
+        self.transient(parent)
+        self.minsize(440, 300)
+        self.protocol("WM_DELETE_WINDOW", self.on_cancel)
+
+        self._build()
+        self._centre_on(parent)
+        self.grab_set()
+        self.boxes[labels[0]].focus_set()
+
+    def _build(self):
+        outer = ttk.Frame(self, padding=12)
+        outer.pack(fill="both", expand=True)
+        outer.columnconfigure(0, weight=1)
+
+        ttk.Label(
+            outer,
+            text="These labels are not on any Client List entry yet, so the PSK "
+                 "would match no clients. Enter the MACs to tag with each label, "
+                 "one per line, optionally followed by a name "
+                 "(e.g. 'aa:bb:cc:dd:ee:ff printer5'). MACs already in the "
+                 "Client List keep their other labels.",
+            foreground=MUTED, wraplength=420, justify="left",
+        ).grid(row=0, column=0, sticky="w", pady=(0, 8))
+
+        height = 5 if len(self.labels) <= 2 else 3
+        for row, label in enumerate(self.labels, start=1):
+            frame = ttk.LabelFrame(outer, text=label, padding=6)
+            frame.grid(row=row, column=0, sticky="nsew", pady=(0, 6))
+            frame.columnconfigure(0, weight=1)
+            frame.rowconfigure(0, weight=1)
+            outer.rowconfigure(row, weight=1)
+            box = tk.Text(
+                frame, width=40, height=height, wrap="none", undo=True,
+                background=BOX_BG, foreground=BOX_FG, font=MONO_FONT,
+                insertbackground=BOX_FG,
+            )
+            box.grid(row=0, column=0, sticky="nsew")
+            self.boxes[label] = box
+
+        buttons = ttk.Frame(outer)
+        buttons.grid(row=len(self.labels) + 1, column=0, sticky="e", pady=(8, 0))
+        ttk.Button(buttons, text="Tag and save", command=self.on_tag).pack(side="right")
+        ttk.Button(
+            buttons, text="Save without tagging", command=self.on_skip
+        ).pack(side="right", padx=(0, 6))
+        ttk.Button(buttons, text="Cancel", command=self.on_cancel).pack(
+            side="right", padx=(0, 6)
+        )
+
+    def _centre_on(self, parent):
+        self.update_idletasks()
+        x = parent.winfo_rootx() + (parent.winfo_width() - self.winfo_width()) // 2
+        y = parent.winfo_rooty() + (parent.winfo_height() - self.winfo_height()) // 3
+        self.geometry(f"+{max(x, 0)}+{max(y, 0)}")
+
+    def _close(self):
+        try:
+            self.grab_release()
+        except tk.TclError:
+            pass
+        self.destroy()
+        if self.prev_grab is not None:
+            try:
+                self.prev_grab.grab_set()
+            except tk.TclError:
+                pass
+
+    def on_tag(self):
+        assignments = {}
+        try:
+            for label, box in self.boxes.items():
+                clients = parse_label_clients(box.get("1.0", "end"))
+                if clients:
+                    assignments[label] = clients
+        except ValueError as exc:
+            messagebox.showwarning(f"Check '{label}'", str(exc), parent=self)
+            return
+        if not assignments:
+            messagebox.showwarning(
+                "No MACs entered",
+                "Enter at least one MAC address, or choose 'Save without tagging'.",
+                parent=self,
+            )
+            return
+        self._close()
+        self.on_ok(assignments)
+
+    def on_skip(self):
+        self._close()
+        self.on_ok({})
+
+    def on_cancel(self):
+        self._close()
+        self.on_cancel_cb()
+
+
+class CleanupDialog(tk.Toplevel):
+    """Prune MACs from usermac labels after N days without a connection.
+
+    The logic lives in cleanup.py; this window edits the per-org policy and
+    shows a preview before anything in Mist changes.
+    """
+
+    def __init__(self, app):
+        super().__init__(app)
+        self.app = app
+        self.org_id = app.org_id
+        self.policy = cleanup.load_policy(self.org_id)
+        self.busy = False
+
+        self.var_default = tk.StringVar(value=str(self.policy["default_days"]))
+        self.var_psk_only = tk.BooleanVar(value=bool(self.policy["psk_only"]))
+        self.var_delete_empty = tk.BooleanVar(value=bool(self.policy["delete_empty"]))
+        self.var_max = tk.StringVar(value=str(self.policy["max_percent"]))
+        self.var_label_days = tk.StringVar()
+        self.var_summary = tk.StringVar(
+            value="Preview shows what would be removed. Nothing changes in Mist until Run now."
+        )
+
+        self.title("Label cleanup")
+        self.transient(app)
+        self.minsize(760, 560)
+        self.protocol("WM_DELETE_WINDOW", self.on_close)
+        self._build()
+        self._fill_labels()
+        self._centre_on(app)
+        self.grab_set()
+
+    # ---------------- layout ----------------
+
+    def _build(self):
+        outer = ttk.Frame(self, padding=12)
+        outer.pack(fill="both", expand=True)
+        outer.columnconfigure(0, weight=1)
+        outer.columnconfigure(1, weight=1)
+        outer.rowconfigure(3, weight=1)
+
+        policy = ttk.LabelFrame(outer, text="Policy", padding=10)
+        policy.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
+        line = ttk.Frame(policy)
+        line.pack(anchor="w")
+        ttk.Label(line, text="Remove a MAC from a label after").pack(side="left")
+        ttk.Entry(line, textvariable=self.var_default, width=5).pack(side="left", padx=4)
+        ttk.Label(line, text="days unused").pack(side="left")
+        ttk.Label(policy, text="0 = never, unless a label sets its own days.",
+                  foreground=MUTED).pack(anchor="w", pady=(0, 6))
+        ttk.Checkbutton(
+            policy, text="Only count connections made with a PSK that uses the label",
+            variable=self.var_psk_only,
+        ).pack(anchor="w")
+        ttk.Checkbutton(
+            policy, text="Delete Client List entries left with no labels",
+            variable=self.var_delete_empty,
+        ).pack(anchor="w")
+        line = ttk.Frame(policy)
+        line.pack(anchor="w", pady=(6, 0))
+        ttk.Label(line, text="Refuse a run that removes more than").pack(side="left")
+        ttk.Entry(line, textvariable=self.var_max, width=4).pack(side="left", padx=4)
+        ttk.Label(line, text="% of labelled MACs").pack(side="left")
+
+        labels = ttk.LabelFrame(outer, text="Per-label days", padding=10)
+        labels.grid(row=0, column=1, sticky="nsew")
+        labels.columnconfigure(0, weight=1)
+        self.tree_labels = ttk.Treeview(
+            labels, columns=("label", "macs", "days"), show="headings", height=5,
+            selectmode="browse",
+        )
+        for col, text, width in (("label", "Label", 150), ("macs", "MACs", 50),
+                                 ("days", "Days", 110)):
+            self.tree_labels.heading(col, text=text)
+            self.tree_labels.column(col, width=width, anchor="w")
+        self.tree_labels.grid(row=0, column=0, sticky="nsew")
+        self.tree_labels.bind("<<TreeviewSelect>>", self._on_label_selected)
+        line = ttk.Frame(labels)
+        line.grid(row=1, column=0, sticky="w", pady=(6, 0))
+        ttk.Label(line, text="Selected:").pack(side="left")
+        ttk.Entry(line, textvariable=self.var_label_days, width=5).pack(side="left", padx=4)
+        ttk.Button(line, text="Set", command=self.on_set_label).pack(side="left")
+        ttk.Button(line, text="Use default", command=self.on_clear_label).pack(
+            side="left", padx=(4, 0)
+        )
+
+        buttons = ttk.Frame(outer)
+        buttons.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(10, 6))
+        self.btn_preview = ttk.Button(buttons, text="Preview", command=self.on_preview)
+        self.btn_preview.pack(side="left")
+        self.btn_run = ttk.Button(buttons, text="Run now", command=self.on_run)
+        self.btn_run.pack(side="left", padx=(6, 0))
+        self.btn_undo = ttk.Button(buttons, text="Undo last run...", command=self.on_undo)
+        self.btn_undo.pack(side="left", padx=(6, 0))
+        self.btn_close = ttk.Button(buttons, text="Close", command=self.on_close)
+        self.btn_close.pack(side="right")
+
+        ttk.Label(outer, textvariable=self.var_summary, foreground=MUTED,
+                  wraplength=720, justify="left").grid(
+            row=2, column=0, columnspan=2, sticky="w", pady=(0, 4)
+        )
+
+        box = ttk.Frame(outer)
+        box.grid(row=3, column=0, columnspan=2, sticky="nsew")
+        box.columnconfigure(0, weight=1)
+        box.rowconfigure(0, weight=1)
+        columns = ("label", "mac", "name", "seen", "idle", "threshold", "used_by")
+        self.tree = ttk.Treeview(box, columns=columns, show="headings", height=10)
+        for col, text, width in (
+            ("label", "Label", 110), ("mac", "MAC", 125), ("name", "Name", 100),
+            ("seen", "Last seen", 120), ("idle", "Idle days", 65),
+            ("threshold", "Threshold", 70), ("used_by", "Used by PSKs", 150),
+        ):
+            self.tree.heading(col, text=text)
+            self.tree.column(col, width=width, anchor="w")
+        self.tree.grid(row=0, column=0, sticky="nsew")
+        yscroll = ttk.Scrollbar(box, orient="vertical", command=self.tree.yview)
+        yscroll.grid(row=0, column=1, sticky="ns")
+        self.tree.configure(yscrollcommand=yscroll.set)
+
+    def _centre_on(self, parent):
+        self.update_idletasks()
+        x = parent.winfo_rootx() + (parent.winfo_width() - self.winfo_width()) // 2
+        y = parent.winfo_rooty() + (parent.winfo_height() - self.winfo_height()) // 3
+        self.geometry(f"+{max(x, 0)}+{max(y, 0)}")
+
+    # ---------------- per-label days ----------------
+
+    def _fill_labels(self):
+        labels = set(self.app.label_clients) | set(self.policy["label_days"])
+        self.tree_labels.delete(*self.tree_labels.get_children())
+        for label in sorted(labels, key=str.lower):
+            count = len(self.app.label_clients.get(label, []))
+            if label in self.policy["label_days"]:
+                days = int(self.policy["label_days"][label])
+                shown = "never" if days == 0 else str(days)
+            else:
+                shown = f"default ({self.var_default.get().strip() or '?'})"
+            self.tree_labels.insert("", "end", iid=label, values=(label, count, shown))
+
+    def _selected_label(self):
+        selection = self.tree_labels.selection()
+        return selection[0] if selection else None
+
+    def _on_label_selected(self, _event=None):
+        label = self._selected_label()
+        if label is not None:
+            self.var_label_days.set(str(self.policy["label_days"].get(label, "")))
+
+    def on_set_label(self):
+        label = self._selected_label()
+        if label is None:
+            messagebox.showinfo("Per-label days", "Select a label first.", parent=self)
+            return
+        try:
+            days = parse_int(self.var_label_days.get(), "Days", minimum=0)
+        except ValueError as exc:
+            messagebox.showwarning("Per-label days", str(exc), parent=self)
+            return
+        if days is None:
+            self.on_clear_label()
+            return
+        self.policy["label_days"][label] = days
+        self._fill_labels()
+        self.tree_labels.selection_set(label)
+
+    def on_clear_label(self):
+        label = self._selected_label()
+        if label is None:
+            return
+        self.policy["label_days"].pop(label, None)
+        self.var_label_days.set("")
+        self._fill_labels()
+        self.tree_labels.selection_set(label)
+
+    # ---------------- policy ----------------
+
+    def _read_policy(self):
+        """Validate the form into self.policy and save it. Raises ValueError."""
+        default = parse_int(self.var_default.get(), "Days unused", minimum=0)
+        cap = parse_int(self.var_max.get(), "Maximum percent", minimum=1)
+        if cap is not None and cap > 100:
+            raise ValueError("Maximum percent must be between 1 and 100.")
+        self.policy.update({
+            "default_days": 0 if default is None else default,
+            "psk_only": bool(self.var_psk_only.get()),
+            "delete_empty": bool(self.var_delete_empty.get()),
+            "max_percent": 20 if cap is None else cap,
+        })
+        cleanup.save_policy(self.org_id, self.policy)
+        self._fill_labels()
+
+    # ---------------- background work ----------------
+
+    def _set_busy(self, busy):
+        self.busy = busy
+        state = "disabled" if busy else "normal"
+        for widget in (self.btn_preview, self.btn_run, self.btn_undo, self.btn_close):
+            widget.configure(state=state)
+
+    def _progress(self, index, total):
+        self.app.after(0, lambda: self.app.var_status.set(
+            f"Checking client history ... {index}/{total} MACs"
+        ))
+
+    def _plan_async(self, then):
+        """Save the policy, build a plan off the UI thread, show it, then then(plan)."""
+        try:
+            self._read_policy()
+        except (ValueError, OSError) as exc:
+            messagebox.showwarning("Label cleanup", str(exc), parent=self)
+            return
+        self._set_busy(True)
+        client, org_id, policy = self.app.client, self.org_id, dict(self.policy)
+
+        def on_plan(plan):
+            self._set_busy(False)
+            self._show_plan(plan)
+            then(plan)
+
+        self.app._run(
+            "Checking client history ...",
+            lambda: cleanup.build_plan(client, org_id, policy, progress=self._progress),
+            on_plan,
+            on_error=lambda: self._set_busy(False),
+        )
+
+    def _show_plan(self, plan):
+        self.tree.delete(*self.tree.get_children())
+        for index, cand in enumerate(plan.candidates):
+            seen = format_epoch(cand.last_seen) if cand.last_seen else "not seen"
+            self.tree.insert("", "end", iid=str(index), values=(
+                cand.label, format_mac(cand.mac), cand.name, seen, cand.idle_days,
+                cand.threshold, ", ".join(cand.used_by) or "(none)",
+            ))
+        count = len(plan.candidates)
+        if count:
+            text = f"{count} of {plan.pairs} labelled MAC(s) are past their threshold."
+        else:
+            text = f"Nothing to remove - all {plan.pairs} labelled MAC(s) are within their threshold."
+        if plan.over_cap:
+            text += (f" That is more than the {plan.max_percent}% limit, so Run now will "
+                     "refuse. Check the thresholds, or raise the limit if this is expected.")
+        text += (f" 'Not seen' means no connection in Mist's last {cleanup.LOOKBACK_DAYS} "
+                 "days of history, nor since this app started tracking.")
+        self.var_summary.set(text)
+        self.app.var_status.set(f"Label cleanup preview: {count} MAC(s) past threshold.")
+
+    # ---------------- actions ----------------
+
+    def on_preview(self):
+        self._plan_async(lambda _plan: None)
+
+    def on_run(self):
+        # Always re-plan: a preview from minutes ago may no longer be true.
+        self._plan_async(self._confirm_run)
+
+    def _confirm_run(self, plan):
+        if not plan.candidates:
+            messagebox.showinfo("Label cleanup", "Nothing to remove.", parent=self)
+            return
+        if plan.over_cap:
+            messagebox.showwarning(
+                "Label cleanup",
+                f"This run would remove {len(plan.candidates)} of {plan.pairs} labelled "
+                f"MACs, more than the {plan.max_percent}% limit.\n\nNothing was changed. "
+                "Check the thresholds, or raise the limit if this is expected.",
+                parent=self,
+            )
+            return
+        labels = sorted({c.label for c in plan.candidates}, key=str.lower)
+        lines = "\n".join(
+            f"  - {label}: {sum(c.label == label for c in plan.candidates)} MAC(s)"
+            for label in labels[:12]
+        )
+        psks = sorted({name for c in plan.candidates for name in c.used_by if name})
+        psk_text = (", ".join(psks[:8]) + (" ..." if len(psks) > 8 else "")) or "(none)"
+        if not messagebox.askyesno(
+            "Label cleanup",
+            f"Remove {len(plan.candidates)} MAC(s) from their labels?\n\n{lines}\n\n"
+            f"These devices will stop matching these PSKs: {psk_text}\n\n"
+            "Every removal is logged and can be put back with Undo last run.",
+            icon="warning", default="no", parent=self,
+        ):
+            return
+        self._set_busy(True)
+        client, delete_empty = self.app.client, self.policy["delete_empty"]
+        self.app._run(
+            f"Removing {len(plan.candidates)} MAC(s) from labels ...",
+            lambda: cleanup.apply_plan(client, plan, delete_empty),
+            self._after_run,
+            on_error=lambda: self._set_busy(False),
+        )
+
+    def _after_run(self, result):
+        _run_id, count = result
+        self._set_busy(False)
+        self.tree.delete(*self.tree.get_children())
+        self.var_summary.set(
+            f"Removed {count} MAC(s). Logged to {cleanup.log_path()} - "
+            "Undo last run puts them back."
+        )
+        self.app.var_status.set(f"Label cleanup removed {count} MAC(s).")
+        self.app._load_labels()
+
+    def on_undo(self):
+        run_id, rows = cleanup.last_run(self.org_id)
+        if not run_id:
+            messagebox.showinfo("Undo", "No cleanup run to undo for this org.", parent=self)
+            return
+        shown = "\n".join(f"  - {row['label']}: {format_mac(row['mac'])} {row['name']}"
+                          for row in rows[:12])
+        extra = "" if len(rows) <= 12 else f"\n  ... and {len(rows) - 12} more"
+        if not messagebox.askyesno(
+            "Undo last run",
+            f"Put back {len(rows)} label assignment(s) removed on {rows[0]['time']}?"
+            f"\n\n{shown}{extra}",
+            parent=self,
+        ):
+            return
+        self._set_busy(True)
+        client, org_id = self.app.client, self.org_id
+        self.app._run(
+            "Restoring labels ...",
+            lambda: cleanup.undo_run(client, org_id, run_id),
+            lambda tagged: self._after_undo(len(rows), tagged),
+            on_error=lambda: self._set_busy(False),
+        )
+
+    def _after_undo(self, count, tagged):
+        self._set_busy(False)
+        self.var_summary.set(f"Restored {count} label assignment(s).{tag_summary(tagged)}")
+        self.app.var_status.set(f"Label cleanup undone - {count} restored.")
+        self.app._load_labels()
+
+    def on_close(self):
+        if self.busy:
+            return
+        try:
+            self._read_policy()
+        except (ValueError, OSError):
+            pass  # keep the last saved policy rather than trap the user here
+        try:
+            self.grab_release()
+        except tk.TclError:
+            pass
+        self.destroy()
 
 
 def main():
