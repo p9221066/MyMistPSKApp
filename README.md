@@ -143,7 +143,9 @@ to the labels field lists the labels in use and the MACs each one tags.
 **Label cleanup...** removes MACs from labels after a number of days without a
 connection:
 
-- Set a default threshold, and per-label overrides (`0` = never prune that label).
+- Set a default threshold, and per-label overrides, each **1 to 30 days**
+  (`0` = never prune that label).
+- Optionally count only connections to an SSID that has a PSK using the label.
 - **Preview** lists what would be removed and which PSKs use each label. Nothing
   changes in Mist until **Run now**, which re-checks and asks for confirmation.
 - A run that would remove more than the set share of labelled MACs (20% by
@@ -151,11 +153,18 @@ connection:
 - Every removal is logged to `cleanup-log.csv`; **Undo last run** puts the
   labels back, recreating deleted entries.
 
-Mist keeps only a short client history, so the app checks the last 30 days and
-keeps its own per-org record of when each MAC was last seen
-(`ledger-<org_id>.json`, next to the config). A MAC never seen counts as idle
-for at most 30 days on the first run, and builds up from there. The threshold is
-a per-org setting (`cleanup-<org_id>.json`).
+**Why 30 days at most.** "Last seen" comes straight from Mist, which keeps about
+30 days of client history. Past that, Mist cannot tell an idle device from one it
+no longer remembers, so the app does not allow longer thresholds. Older settings
+above 30 are lowered to 30 when loaded. For each MAC the app combines two
+sources: the connection history, which covers the full 30 days but records a
+connection only once it ends, and the recent-clients search, which covers only
+about a week but includes devices connected right now. A device Mist has not
+seen at all shows as **not in 30 days** with **30+** idle days.
+
+A newly tagged MAC is never removed before its threshold has passed since it
+was added, and **Undo last run** gives what it restores a fresh grace period.
+The thresholds are a per-org setting (`cleanup-<org_id>.json`, next to the config).
 
 Removing a label from a MAC affects every PSK and policy that uses that label.
 Devices with randomized MACs may also show as idle after rotating their address.
@@ -244,7 +253,7 @@ authenticate against another.
 | `common.py` | Shared by both apps: connection and status bars, background calls, MAC/label helpers, label cleanup window |
 | `mist_api.py` | Mist REST client: auth, pagination, error handling |
 | `settings.py` | Local config load/save |
-| `cleanup.py` | Label cleanup: policy, last-seen ledger, plan, apply, undo |
+| `cleanup.py` | Label cleanup: policy, plan, apply, undo |
 | `CHANGELOG.md` | What changed between versions |
 | `docs/ADMIN-GUIDE.md` | Setup and ground rules for an additional network admin |
 | `run.bat`, `run_labels.bat` | Windows launchers |
@@ -265,7 +274,7 @@ authenticate against another.
 | Tag a new MAC with labels | `POST /api/v1/orgs/{org_id}/usermacs` |
 | Change an entry's labels | `PUT /api/v1/orgs/{org_id}/usermacs/{usermac_id}` |
 | Delete an entry (cleanup) | `DELETE /api/v1/orgs/{org_id}/usermacs/{usermac_id}` |
-| Last seen for a MAC (cleanup) | `GET /api/v1/orgs/{org_id}/clients/search?mac=...&duration=30d` |
+| Last seen for a MAC (cleanup) | `GET /api/v1/orgs/{org_id}/clients/search?mac=...&duration=30d` and `GET /api/v1/orgs/{org_id}/clients/sessions/search?mac=...&duration=30d` |
 
 Requests authenticate with the `Authorization: Token <api-token>` header.
 
@@ -310,6 +319,7 @@ against a fake client. Its add and remove calls have not yet changed a real org.
   mode yet.
 - Cleanup looks up each labelled MAC separately (one API call per MAC), which
   counts against Mist's hourly API limit on very large Client Lists.
-- With "only count connections made with a PSK that uses the label", Mist
-  reports which PSKs a MAC used over 30 days but a single last-seen time, so a
-  device that later moved to another SSID still counts as active.
+- Thresholds are limited to 30 days by Mist's client history.
+- "Only count connections to an SSID that has a PSK using the label" works by
+  SSID, because Mist's connection history records the SSID but not the PSK. A
+  device using a different PSK on the same SSID still counts as active.

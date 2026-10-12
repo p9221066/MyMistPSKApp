@@ -200,24 +200,43 @@ class MistClient:
     # ---------- client history ----------
 
     def client_sightings(self, org_id, mac, duration="30d"):
-        """(last_seen epoch or None, {psk_id, ...}) for one wireless client MAC.
+        """{ssid: last seen epoch} for one wireless client MAC within `duration`.
 
-        Mist keeps only a limited window of client history, so None means "not
-        seen within `duration`", not "never connected".
+        Two sources, because neither covers the whole window on its own:
+        - clients/search holds only about the last week, but includes clients
+          that are connected right now;
+        - clients/sessions/search reaches back further, but records a
+          connection only once it has ended, so a device connected all month
+          would be missing from it.
+        An empty dict means "not seen within `duration`", not "never connected".
         """
+        seen = {}
+
+        def note(ssid, stamp):
+            if isinstance(stamp, (int, float)) and stamp > seen.get(ssid or "", 0):
+                seen[ssid or ""] = float(stamp)
+
         body = self._request(
             "GET", f"/api/v1/orgs/{org_id}/clients/search",
             params={"mac": mac, "duration": duration, "limit": 10},
         ) or {}
-        last_seen, psk_ids = None, set()
         for row in body.get("results") or []:
-            if not isinstance(row, dict) or row.get("mac") != mac:
-                continue
-            stamp = row.get("timestamp")
-            if isinstance(stamp, (int, float)) and (last_seen is None or stamp > last_seen):
-                last_seen = float(stamp)
-            psk_ids.update(pid for pid in row.get("psk_id") or [] if pid)
-        return last_seen, psk_ids
+            if isinstance(row, dict) and row.get("mac") == mac:
+                for ssid in row.get("ssid") or [row.get("last_ssid")]:
+                    note(ssid, row.get("timestamp"))
+
+        body = self._request(
+            "GET", f"/api/v1/orgs/{org_id}/clients/sessions/search",
+            params={"mac": mac, "duration": duration, "limit": 1000},
+        ) or {}
+        for _ in range(100):  # stop guard, matching _paged
+            for row in body.get("results") or []:
+                if isinstance(row, dict) and row.get("mac") == mac:
+                    note(row.get("ssid"), row.get("disconnect") or row.get("timestamp"))
+            if not body.get("next") or not body.get("results"):
+                break
+            body = self._request("GET", body["next"]) or {}
+        return seen
 
     def tag_usermacs(self, org_id, assignments):
         """Add labels to Client List entries, creating entries that are missing.

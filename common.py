@@ -403,6 +403,20 @@ class MistAppBase(tk.Tk):
 # label cleanup
 # --------------------------------------------------------------------------
 
+DAYS_RANGE = f"({cleanup.MIN_DAYS}-{cleanup.MAX_DAYS}, 0 = never)"
+
+
+def parse_days(text, field):
+    """A cleanup threshold: blank -> None, else 0 (never) or MIN_DAYS..MAX_DAYS."""
+    days = parse_int(text, field, minimum=0)
+    if days is not None and days > cleanup.MAX_DAYS:
+        raise ValueError(
+            f"{field} must be {cleanup.MAX_DAYS} or less. Mist keeps "
+            f"{cleanup.LOOKBACK_DAYS} days of client history, so a longer threshold "
+            "cannot tell an idle device from one Mist no longer remembers."
+        )
+    return days
+
 class CleanupDialog(tk.Toplevel):
     """Prune MACs from usermac labels after N days without a connection.
 
@@ -418,7 +432,7 @@ class CleanupDialog(tk.Toplevel):
         self.busy = False
 
         self.var_default = tk.StringVar(value=str(self.policy["default_days"]))
-        self.var_psk_only = tk.BooleanVar(value=bool(self.policy["psk_only"]))
+        self.var_ssid_only = tk.BooleanVar(value=bool(self.policy["ssid_only"]))
         self.var_delete_empty = tk.BooleanVar(value=bool(self.policy["delete_empty"]))
         self.var_max = tk.StringVar(value=str(self.policy["max_percent"]))
         self.var_label_days = tk.StringVar()
@@ -450,12 +464,16 @@ class CleanupDialog(tk.Toplevel):
         line.pack(anchor="w")
         ttk.Label(line, text="Remove a MAC from a label after").pack(side="left")
         ttk.Entry(line, textvariable=self.var_default, width=5).pack(side="left", padx=4)
-        ttk.Label(line, text="days unused").pack(side="left")
-        ttk.Label(policy, text="0 = never, unless a label sets its own days.",
-                  foreground=MUTED).pack(anchor="w", pady=(0, 6))
+        ttk.Label(line, text=f"days unused  {DAYS_RANGE}").pack(side="left")
+        ttk.Label(
+            policy,
+            text=f"Mist keeps {cleanup.LOOKBACK_DAYS} days of client history, so that is "
+                 "the longest threshold. A label can set its own days.",
+            foreground=MUTED, wraplength=330, justify="left",
+        ).pack(anchor="w", pady=(0, 6))
         ttk.Checkbutton(
-            policy, text="Only count connections made with a PSK that uses the label",
-            variable=self.var_psk_only,
+            policy, text="Only count connections to an SSID that has a PSK using the label",
+            variable=self.var_ssid_only,
         ).pack(anchor="w")
         ttk.Checkbutton(
             policy, text="Delete Client List entries left with no labels",
@@ -488,6 +506,8 @@ class CleanupDialog(tk.Toplevel):
         ttk.Button(line, text="Use default", command=self.on_clear_label).pack(
             side="left", padx=(4, 0)
         )
+        ttk.Label(labels, text=f"Days for the selected label {DAYS_RANGE}.",
+                  foreground=MUTED).grid(row=2, column=0, sticky="w", pady=(4, 0))
 
         buttons = ttk.Frame(outer)
         buttons.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(10, 6))
@@ -552,7 +572,7 @@ class CleanupDialog(tk.Toplevel):
             messagebox.showinfo("Per-label days", "Select a label first.", parent=self)
             return
         try:
-            days = parse_int(self.var_label_days.get(), "Days", minimum=0)
+            days = parse_days(self.var_label_days.get(), "Days")
         except ValueError as exc:
             messagebox.showwarning("Per-label days", str(exc), parent=self)
             return
@@ -576,13 +596,13 @@ class CleanupDialog(tk.Toplevel):
 
     def _read_policy(self):
         """Validate the form into self.policy and save it. Raises ValueError."""
-        default = parse_int(self.var_default.get(), "Days unused", minimum=0)
+        default = parse_days(self.var_default.get(), "Days unused")
         cap = parse_int(self.var_max.get(), "Maximum percent", minimum=1)
         if cap is not None and cap > 100:
             raise ValueError("Maximum percent must be between 1 and 100.")
         self.policy.update({
             "default_days": 0 if default is None else default,
-            "psk_only": bool(self.var_psk_only.get()),
+            "ssid_only": bool(self.var_ssid_only.get()),
             "delete_empty": bool(self.var_delete_empty.get()),
             "max_percent": 20 if cap is None else cap,
         })
@@ -627,9 +647,12 @@ class CleanupDialog(tk.Toplevel):
     def _show_plan(self, plan):
         self.tree.delete(*self.tree.get_children())
         for index, cand in enumerate(plan.candidates):
-            seen = format_epoch(cand.last_seen) if cand.last_seen else "not seen"
+            seen = (format_epoch(cand.last_seen) if cand.last_seen
+                    else f"not in {cleanup.LOOKBACK_DAYS} days")
             self.tree.insert("", "end", iid=str(index), values=(
-                cand.label, format_mac(cand.mac), cand.name, seen, cand.idle_days,
+                cand.label, format_mac(cand.mac), cand.name, seen,
+                f"{cand.idle_days}+" if cand.last_seen is None and
+                cand.idle_days >= cleanup.LOOKBACK_DAYS else cand.idle_days,
                 cand.threshold, ", ".join(cand.used_by) or "(none)",
             ))
         count = len(plan.candidates)
@@ -640,8 +663,8 @@ class CleanupDialog(tk.Toplevel):
         if plan.over_cap:
             text += (f" That is more than the {plan.max_percent}% limit, so Run now will "
                      "refuse. Check the thresholds, or raise the limit if this is expected.")
-        text += (f" 'Not seen' means no connection in Mist's last {cleanup.LOOKBACK_DAYS} "
-                 "days of history, nor since this app started tracking.")
+        text += (f" 'Not in {cleanup.LOOKBACK_DAYS} days' means Mist has no connection "
+                 "from that device in its client history.")
         self.var_summary.set(text)
         self.app.var_status.set(f"Label cleanup preview: {count} MAC(s) past threshold.")
 
