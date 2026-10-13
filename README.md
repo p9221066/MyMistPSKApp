@@ -51,8 +51,6 @@ bundles Tk. Check with `python3 -c "import tkinter"`.
 
 ## Run
 
-| Platform | How |
-| --- | --- |
 | Platform | PSK Manager | Usermac Label Manager |
 | --- | --- | --- |
 | Windows | Double-click `run.bat`, or `python app.py` | Double-click `run_labels.bat`, or `python labels_app.py` |
@@ -61,6 +59,20 @@ bundles Tk. Check with `python3 -c "import tkinter"`.
 
 If a `.command` file will not launch from Finder, make it executable once:
 `chmod +x run.command run_labels.command`.
+
+### Light and dark mode
+
+Both apps have a **Theme** selector at the top right of the Connection bar:
+
+- **Light**: the platform's normal look.
+- **Dark**: dark windows, lists, text boxes and menus. On Windows 10 and 11 the
+  title bars turn dark too.
+- **System**: follows the operating system's light/dark setting when the app
+  starts (Windows and macOS, and Linux desktops that report it).
+
+The choice applies straight away to every open window, and is remembered for
+both apps. Pop-up messages such as confirmations are drawn by the operating
+system, so they keep its own look.
 
 ## Getting an API token
 
@@ -137,7 +149,7 @@ MAC edit you make will show you which one applies.
 
 A usermac label only exists as a tag on Client List entries, each keyed by one
 MAC. When a `usermac_labels` PSK names a label that no entry carries yet, the
-app asks which MACs to tag with it before saving. The **Existing ▾** menu next
+app asks which MACs to tag with it before saving. The **Existing** menu next
 to the labels field lists the labels in use and the MACs each one tags.
 
 **Label cleanup...** removes MACs from labels after a number of days without a
@@ -253,6 +265,7 @@ authenticate against another.
 | `common.py` | Shared by both apps: connection and status bars, background calls, MAC/label helpers, label cleanup window |
 | `mist_api.py` | Mist REST client: auth, pagination, error handling |
 | `settings.py` | Local config load/save |
+| `theme.py` | Light and dark mode for both apps |
 | `cleanup.py` | Label cleanup: policy, plan, apply, undo |
 | `CHANGELOG.md` | What changed between versions |
 | `docs/ADMIN-GUIDE.md` | Setup and ground rules for an additional network admin |

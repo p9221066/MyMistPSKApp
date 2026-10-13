@@ -16,6 +16,7 @@ from tkinter import messagebox, ttk
 
 import cleanup
 import settings
+import theme
 from mist_api import CLOUDS, MistClient, MistError
 
 IS_MAC = sys.platform == "darwin"
@@ -29,14 +30,8 @@ elif sys.platform.startswith("win"):
 else:
     MONO_FONT = ("DejaVu Sans Mono", 10)
 
-# The boxed areas set both colours. Setting only a background leaves the
-# foreground to the system, which turns white text onto a light panel under
-# macOS dark mode.
-BOX_BG = "#f3f3f3"
-BOX_FG = "#1a1a1a"
-MUTED = "#666666"
-WARN = "#a05000"
-DISABLED = "#999999"
+# Colours live in theme.py: muted and warning text use the Muted.TLabel and
+# Warn.TLabel styles, and text boxes come from theme.text_box().
 
 CUSTOM_CLOUD = "Custom host..."
 MASK = "•"
@@ -143,6 +138,7 @@ def format_epoch(value):
 
 
 def centre_on(window, parent):
+    theme.prepare_window(window)   # every dialog passes through here
     window.update_idletasks()
     x = parent.winfo_rootx() + (parent.winfo_width() - window.winfo_width()) // 2
     y = parent.winfo_rooty() + (parent.winfo_height() - window.winfo_height()) // 3
@@ -179,6 +175,9 @@ class MistAppBase(tk.Tk):
         self.var_token = var(value=self.cfg["token"])
         self.var_remember = tk.BooleanVar(value=bool(self.cfg["remember_token"]))
         self.var_org = var()
+        choice = self.cfg.get("theme") if self.cfg.get("theme") in theme.CHOICES else "Light"
+        self.var_theme = var(value=choice)
+        theme.apply(self, choice)
         self.var_status = var(value="Not connected. Paste an API token and press Connect.")
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
@@ -201,6 +200,16 @@ class MistAppBase(tk.Tk):
         self.lbl_host.grid(row=0, column=2, sticky="w", padx=(12, 6))
         self.ent_host = ttk.Entry(frame, textvariable=self.var_host, width=26)
         self.ent_host.grid(row=0, column=3, sticky="w")
+
+        look = ttk.Frame(frame)
+        look.grid(row=0, column=4, sticky="e")
+        ttk.Label(look, text="Theme").pack(side="left", padx=(0, 6))
+        cmb_theme = ttk.Combobox(
+            look, textvariable=self.var_theme, state="readonly", width=8,
+            values=list(theme.CHOICES),
+        )
+        cmb_theme.pack(side="left")
+        cmb_theme.bind("<<ComboboxSelected>>", lambda _e: self.on_theme_selected())
 
         ttk.Label(frame, text="API token").grid(
             row=1, column=0, sticky="w", padx=(0, 6), pady=(8, 0)
@@ -239,9 +248,17 @@ class MistAppBase(tk.Tk):
     def _sync_cloud_state(self):
         custom = self.var_cloud.get() == CUSTOM_CLOUD
         self.ent_host.configure(state="normal" if custom else "disabled")
-        self.lbl_host.configure(foreground="" if custom else DISABLED)
+        self.lbl_host.state(["!disabled"] if custom else ["disabled"])
+
+    def on_theme_selected(self):
+        theme.apply(self, self.var_theme.get())
+        self._on_theme_changed()
+        self._save_config()
 
     # ---------------- hooks ----------------
+
+    def _on_theme_changed(self):
+        """Recolour anything the theme module cannot reach, like Treeview tags."""
 
     def _set_connected(self, connected):
         self.cmb_org.configure(state="readonly" if connected else "disabled")
@@ -387,6 +404,7 @@ class MistAppBase(tk.Tk):
             "custom_host": self.var_host.get().strip(),
             "token": self.var_token.get().strip(),
             "remember_token": bool(self.var_remember.get()),
+            "theme": self.var_theme.get(),
             "org_id": self.org_id or self.cfg.get("org_id", ""),
         })
         try:
@@ -469,7 +487,7 @@ class CleanupDialog(tk.Toplevel):
             policy,
             text=f"Mist keeps {cleanup.LOOKBACK_DAYS} days of client history, so that is "
                  "the longest threshold. A label can set its own days.",
-            foreground=MUTED, wraplength=330, justify="left",
+            style="Muted.TLabel", wraplength=330, justify="left",
         ).pack(anchor="w", pady=(0, 6))
         ttk.Checkbutton(
             policy, text="Only count connections to an SSID that has a PSK using the label",
@@ -507,7 +525,7 @@ class CleanupDialog(tk.Toplevel):
             side="left", padx=(4, 0)
         )
         ttk.Label(labels, text=f"Days for the selected label {DAYS_RANGE}.",
-                  foreground=MUTED).grid(row=2, column=0, sticky="w", pady=(4, 0))
+                  style="Muted.TLabel").grid(row=2, column=0, sticky="w", pady=(4, 0))
 
         buttons = ttk.Frame(outer)
         buttons.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(10, 6))
@@ -520,7 +538,7 @@ class CleanupDialog(tk.Toplevel):
         self.btn_close = ttk.Button(buttons, text="Close", command=self.on_close)
         self.btn_close.pack(side="right")
 
-        ttk.Label(outer, textvariable=self.var_summary, foreground=MUTED,
+        ttk.Label(outer, textvariable=self.var_summary, style="Muted.TLabel",
                   wraplength=720, justify="left").grid(
             row=2, column=0, columnspan=2, sticky="w", pady=(0, 4)
         )

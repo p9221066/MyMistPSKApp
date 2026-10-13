@@ -13,12 +13,13 @@ from datetime import datetime
 from tkinter import filedialog, messagebox, ttk
 
 from common import (
-    BOX_BG, BOX_FG, HEX_MAC, HEX_PATTERN, MASK, MONO_FONT, MUTED, WARN,
+    HEX_MAC, HEX_PATTERN, MASK, MONO_FONT,
     CleanupDialog, MistAppBase, centre_on, format_epoch, format_mac,
     group_by_label, normalize_mac, parse_int, parse_label_clients,
     split_entries, tag_summary,
 )
 from mist_api import USAGE_VALUES
+from theme import make_menu, text_box
 
 # Ambiguous glyphs (0/O, 1/l/I) left out so a passphrase can be read aloud.
 PASSPHRASE_ALPHABET = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
@@ -205,7 +206,7 @@ class PSKApp(MistAppBase):
             ttk.Label(frame, text=text).grid(row=row, column=0, sticky="w", padx=(0, 6), pady=3)
 
         def hint(text, row, column=2):
-            ttk.Label(frame, text=text, foreground=MUTED).grid(
+            ttk.Label(frame, text=text, style="Muted.TLabel").grid(
                 row=row, column=column, sticky="w", padx=(6, 0)
             )
 
@@ -244,14 +245,14 @@ class PSKApp(MistAppBase):
         self.ent_macs = ttk.Entry(frame, textvariable=self.var_macs)
         self.ent_macs.grid(row=row, column=1, columnspan=2, sticky="ew", pady=3)
         # Only gridded for usage 'usermac_labels'; see _sync_usage_state.
-        self.btn_labels = ttk.Menubutton(frame, text="Existing ▾")
-        self.mnu_labels = tk.Menu(self.btn_labels, tearoff=False)
+        self.btn_labels = ttk.Menubutton(frame, text="Existing")
+        self.mnu_labels = make_menu(self.btn_labels, tearoff=False)
         self.btn_labels.configure(menu=self.mnu_labels)
         self.btn_labels.grid(row=row, column=2, sticky="w", padx=(6, 0), pady=3)
         self.btn_labels.grid_remove()
 
         row += 1
-        self.lbl_macs_hint = ttk.Label(frame, text="", foreground=MUTED)
+        self.lbl_macs_hint = ttk.Label(frame, text="", style="Muted.TLabel")
         self.lbl_macs_hint.grid(row=row, column=1, columnspan=2, sticky="w")
 
         row += 1
@@ -301,7 +302,7 @@ class PSKApp(MistAppBase):
 
         row += 1
         # Advisory only - a missing recipient never blocks Create PSK.
-        self.lbl_email_warn = ttk.Label(frame, text="", foreground=WARN, wraplength=240)
+        self.lbl_email_warn = ttk.Label(frame, text="", style="Warn.TLabel", wraplength=240)
         self.lbl_email_warn.grid(row=row, column=1, columnspan=2, sticky="w")
 
         row += 1
@@ -324,9 +325,9 @@ class PSKApp(MistAppBase):
         row += 1
         # width is set small on purpose: Text defaults to 80 chars, which would
         # force this whole column wide and squeeze the PSK list beside it.
-        self.txt_result = tk.Text(
+        self.txt_result = text_box(
             frame, height=5, width=34, wrap="word", state="disabled", relief="flat",
-            background=BOX_BG, foreground=BOX_FG, font=MONO_FONT, padx=6, pady=4,
+            font=MONO_FONT, padx=6, pady=4,
         )
         self.txt_result.grid(row=row, column=0, columnspan=3, sticky="nsew", pady=(4, 0))
         frame.rowconfigure(row, weight=1)
@@ -356,7 +357,7 @@ class PSKApp(MistAppBase):
         actions.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(6, 8))
         self.btn_macs = ttk.Button(actions, text="Edit MACs", command=self.on_edit_macs)
         self.btn_macs.pack(side="left")
-        ttk.Label(actions, text="(or double-click a row)", foreground=MUTED).pack(
+        ttk.Label(actions, text="(or double-click a row)", style="Muted.TLabel").pack(
             side="left", padx=(6, 12)
         )
         self.btn_delete = ttk.Button(actions, text="Delete selected", command=self.on_delete)
@@ -391,7 +392,7 @@ class PSKApp(MistAppBase):
         xscroll.grid(row=3, column=0, sticky="ew")
         self.tree.configure(yscrollcommand=yscroll.set, xscrollcommand=xscroll.set)
 
-        ttk.Label(frame, textvariable=self.var_count, foreground=MUTED).grid(
+        ttk.Label(frame, textvariable=self.var_count, style="Muted.TLabel").grid(
             row=4, column=0, sticky="w", pady=(6, 0)
         )
 
@@ -434,7 +435,7 @@ class PSKApp(MistAppBase):
         self.lbl_macs_hint.configure(text=hint)
         enabled = usage != "multi"
         self.ent_macs.configure(state="normal" if enabled else "disabled")
-        self.lbl_macs.configure(foreground="" if enabled else "#999999")
+        self.lbl_macs.state(["!disabled"] if enabled else ["disabled"])
         if usage == "usermac_labels":
             self.ent_macs.grid_configure(columnspan=1)
             self.btn_labels.grid()
@@ -459,7 +460,7 @@ class PSKApp(MistAppBase):
             self.mnu_labels.add_command(label="(no labels in the Client List)", state="disabled")
         for label in self.known_labels:
             clients = self.label_clients[label]
-            sub = tk.Menu(self.mnu_labels, tearoff=False)
+            sub = make_menu(self.mnu_labels, tearoff=False)
             sub.add_command(
                 label=f"Add '{label}'", command=lambda value=label: self._add_label(value)
             )
@@ -965,7 +966,7 @@ class MacEditor(tk.Toplevel):
         ttk.Label(
             header,
             text=f"   SSID {self.psk.get('ssid', '')}   usage '{self.usage}'",
-            foreground=MUTED,
+            style="Muted.TLabel",
         ).pack(side="left")
 
         hint = (
@@ -975,7 +976,7 @@ class MacEditor(tk.Toplevel):
             "One entry per line. 'aabbccddeeff' or 'aa:bb:cc:dd:ee:ff', "
             "or a prefix pattern such as '1122*'."
         )
-        ttk.Label(outer, text=hint, foreground=MUTED, wraplength=430).grid(
+        ttk.Label(outer, text=hint, style="Muted.TLabel", wraplength=430).grid(
             row=1, column=0, sticky="w", pady=(8, 4)
         )
 
@@ -983,10 +984,9 @@ class MacEditor(tk.Toplevel):
         box.grid(row=3, column=0, sticky="nsew")
         box.columnconfigure(0, weight=1)
         box.rowconfigure(0, weight=1)
-        self.txt = tk.Text(
+        self.txt = text_box(
             box, width=40, height=14, wrap="none", undo=True,
-            background=BOX_BG, foreground=BOX_FG, font=MONO_FONT,
-            insertbackground=BOX_FG,
+            font=MONO_FONT,
         )
         self.txt.grid(row=0, column=0, sticky="nsew")
         yscroll = ttk.Scrollbar(box, orient="vertical", command=self.txt.yview)
@@ -995,7 +995,7 @@ class MacEditor(tk.Toplevel):
         self.txt.insert("1.0", "\n".join(mac_entries(self.psk)))
         self.txt.bind("<<Modified>>", self._on_modified)
 
-        ttk.Label(outer, textvariable=self.var_count, foreground=MUTED).grid(
+        ttk.Label(outer, textvariable=self.var_count, style="Muted.TLabel").grid(
             row=4, column=0, sticky="w", pady=(6, 0)
         )
         self._update_count()
@@ -1026,7 +1026,7 @@ class MacEditor(tk.Toplevel):
             text="Mist did not return this PSK's passphrase, and its update API "
                  "requires one. Saving will SET the passphrase below, which "
                  "disconnects clients using the current one.",
-            foreground=WARN, wraplength=430, justify="left",
+            style="Warn.TLabel", wraplength=430, justify="left",
         ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 6))
         ttk.Label(warn, text="New passphrase").grid(row=1, column=0, sticky="w", padx=(0, 6))
         ttk.Entry(warn, textvariable=self.var_pass).grid(row=1, column=1, sticky="ew")
@@ -1169,7 +1169,7 @@ class LabelClientsDialog(tk.Toplevel):
                  "one per line, optionally followed by a name "
                  "(e.g. 'aa:bb:cc:dd:ee:ff printer5'). MACs already in the "
                  "Client List keep their other labels.",
-            foreground=MUTED, wraplength=420, justify="left",
+            style="Muted.TLabel", wraplength=420, justify="left",
         ).grid(row=0, column=0, sticky="w", pady=(0, 8))
 
         height = 5 if len(self.labels) <= 2 else 3
@@ -1179,10 +1179,9 @@ class LabelClientsDialog(tk.Toplevel):
             frame.columnconfigure(0, weight=1)
             frame.rowconfigure(0, weight=1)
             outer.rowconfigure(row, weight=1)
-            box = tk.Text(
+            box = text_box(
                 frame, width=40, height=height, wrap="none", undo=True,
-                background=BOX_BG, foreground=BOX_FG, font=MONO_FONT,
-                insertbackground=BOX_FG,
+                font=MONO_FONT,
             )
             box.grid(row=0, column=0, sticky="nsew")
             self.boxes[label] = box

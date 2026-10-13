@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased: dark mode
+
+### Added
+
+- **Theme** selector (Light / Dark / System) in the Connection bar of both
+  apps. It applies at once to every open window, including dialogs, lists,
+  text boxes and menus, and turns the title bar dark on Windows 10/11. The
+  choice is saved and shared by both apps. **System** follows the OS setting
+  when the app starts.
+- `theme.py` holds the colours and styles. Muted and warning text now use the
+  `Muted.TLabel` / `Warn.TLabel` styles, and text boxes and menus are made with
+  `theme.text_box()` / `theme.make_menu()`, so they follow the theme.
+
+### Fixed
+
+- The PSK Manager's **Existing** labels button showed two arrows.
+- The README's Run table had a duplicate header row.
+
 ## Unreleased: label cleanup uses Mist's full 30-day history
 
 ### Fixed
