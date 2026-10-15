@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased: download instructions
+
+### Added
+
+- README **Download** section: get the app from `main` as a ZIP or with
+  `git clone`, how to update, and how to pick a tagged version.
+
 ## Unreleased: dark mode
 
 ### Added

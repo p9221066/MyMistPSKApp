@@ -27,6 +27,31 @@ Both run on Windows, macOS and Linux and share one saved login.
 - Clean up labels: remove MACs that have not connected for a set number of
   days, with a preview, a safety limit and undo
 
+## Download
+
+Always take the **`main`** branch, which is what GitHub shows and downloads by
+default. Other branches hold changes still under review.
+
+- **Without git**: on the
+  [repository page](https://github.com/p9221066/MyMistPSKApp), click
+  **Code > Download ZIP** and unzip it anywhere.
+- **With git**:
+
+  ```
+  git clone https://github.com/p9221066/MyMistPSKApp.git
+  ```
+
+  To update later, run `git pull` in that folder.
+
+To use a specific version instead of the latest, pick it from the
+[tags](https://github.com/p9221066/MyMistPSKApp/tags) page (each one has a ZIP
+download), or with git run `git switch --detach v1.0.0`. What changed in each
+version is in [CHANGELOG.md](CHANGELOG.md).
+
+Settings and the saved API token are stored outside this folder (see
+[Where settings are stored](#where-settings-are-stored)), so replacing the
+folder with a newer download keeps them.
+
 ## Install
 
 Python 3.9 or newer, with Tkinter.
