@@ -280,6 +280,40 @@ class MistClient:
             updated += 1
         return created, updated
 
+    # ---------- Org Labels (wxtags) ----------
+    #
+    # A PSK's role reaches WxLAN policy as the client's AAA user group, so a
+    # policy can only target it through an Org Label of type "AAA Attribute >
+    # User Group": a wxtag matching radius_group.
+
+    def list_wxtags(self, org_id):
+        return [row for row in self._paged(f"/api/v1/orgs/{org_id}/wxtags") if isinstance(row, dict)]
+
+    def create_wxtag(self, org_id, payload):
+        return self._request("POST", f"/api/v1/orgs/{org_id}/wxtags", json=payload)
+
+    def ensure_role_label(self, org_id, role):
+        """Make sure an Org Label matches clients whose user group is `role`.
+
+        Returns (label name, created). A radius_group label that already lists
+        the role is reused. Otherwise one named after the role is created,
+        unless that name is taken by another kind of label, which gives
+        (None, False) so the caller can say so.
+        """
+        tags = self.list_wxtags(org_id)
+        for tag in tags:
+            if tag.get("match") == "radius_group" and role.lower() in (
+                str(value).lower() for value in tag.get("values") or []
+            ):
+                return tag.get("name"), False
+        if any(tag.get("name") == role for tag in tags):
+            return None, False
+        self.create_wxtag(org_id, {
+            "name": role, "type": "match", "match": "radius_group",
+            "op": "in", "values": [role],
+        })
+        return role, True
+
 
 def _safe_json(resp):
     try:

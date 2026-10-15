@@ -18,7 +18,7 @@ from common import (
     group_by_label, normalize_mac, parse_int, parse_label_clients,
     split_entries, tag_summary,
 )
-from mist_api import USAGE_VALUES
+from mist_api import USAGE_VALUES, MistError
 from theme import make_menu, text_box
 
 # Ambiguous glyphs (0/O, 1/l/I) left out so a passphrase can be read aloud.
@@ -880,15 +880,33 @@ class PSKApp(MistAppBase):
 
         def work():
             tagged = self.client.tag_usermacs(org_id, assignments) if assignments else (0, 0)
-            return self.client.create_psk(org_id, payload), tagged
+            created = self.client.create_psk(org_id, payload)
+            return created, tagged, self._role_label_note(org_id, payload.get("role"))
 
         self._run(
             f"Creating PSK '{payload['name']}' ...",
             work,
-            lambda result: self._on_created(result[0], payload, passphrase, result[1]),
+            lambda result: self._on_created(result[0], payload, passphrase, result[1], result[2]),
         )
 
-    def _on_created(self, created, payload, passphrase, tagged=(0, 0)):
+    def _role_label_note(self, org_id, role):
+        """Give the PSK's role a User Group Org Label for WxLAN policy.
+
+        Runs after the PSK exists, so a failure here is reported, not raised.
+        """
+        if not role:
+            return ""
+        try:
+            label, created = self.client.ensure_role_label(org_id, role)
+        except MistError as exc:
+            return f" Could not create a label for role '{role}': {exc}"
+        if label is None:
+            return f" No label made for role '{role}': that name is taken by another label."
+        if created:
+            return f" Label '{label}' created for role '{role}'."
+        return f" Role '{role}' is matched by label '{label}'."
+
+    def _on_created(self, created, payload, passphrase, tagged=(0, 0), role_note=""):
         self.btn_create.configure(state="normal")
         created = created if isinstance(created, dict) else {}
         name = created.get("name") or payload["name"]
@@ -901,7 +919,8 @@ class PSKApp(MistAppBase):
             "Copy it now - the list below does not show passphrases."
         )
         self.var_status.set(
-            f"PSK '{name}' created. Form cleared for the next key." + tag_summary(tagged)
+            f"PSK '{name}' created. Form cleared for the next key."
+            + tag_summary(tagged) + role_note
         )
         self._reset_form(keep_result=True)
         self.ent_name.focus_set()
