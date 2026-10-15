@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased: User Group labels for PSK roles
+
+### Added
+
+- Creating a PSK with a **Role** now makes sure an Org Label of type
+  **AAA Attribute > User Group** matches that role, so WxLAN policy can target
+  clients on the key. A User Group label that already lists the role is reused;
+  otherwise one named after the role is created. The status bar says which, or
+  why no label was made (for example, the name is taken by another label).
+  The PSK is created first, so a label failure never blocks the key.
+
 ## Unreleased: dark mode
 
 ### Added
